@@ -1,0 +1,41 @@
+audio:
+    n_mels: 80
+    n_fft: 1024
+    sample_rate: 16000
+    frame_length_ms: 50
+    frame_shift_ms: 12.5
+    preemphasis: 0.97
+    min_level_db: -100
+    ref_level_db: 20
+    power: 1.5
+    griffin_lim_iters: 200
+    order: 25
+    alpha: 0.42
+
+model:
+    optimizer:
+        type: "Adam"
+        lr: 0.001
+        grad_clip: 1.0
+        weight_decay: 0.0
+        adam_beta1: 0.9
+        adam_beta2: 0.999
+    tacotron :
+        n_vocab: 250
+        embedding_dim: 256
+        mel_dim: 80
+        linear_dim: 1025
+        r: 5
+        use_memory_mask: False
+
+solver:
+    n_jobs: 4
+    batch_size: 16
+    total_steps: 300000
+    checkpoint_interval: 2000
+
+path:
+    align_result: "/home_local/hoa/Desktop/non-parallel-rhythm-flexible-VC/data/VCTK_aligned_result"
+    all_data_dir: "/home_local/hoa/Desktop/non-parallel-rhythm-flexible-VC/data/VCTK-Corpus/for_align"
+    meta_path: "/home_local/hoa/Desktop/non-parallel-rhythm-flexible-VC/data/meta.txt"
+    feat_dir: "/home_local/hoa/Desktop/non-parallel-rhythm-flexible-VC/data/feat"
