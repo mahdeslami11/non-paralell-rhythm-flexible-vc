@@ -1,54 +1,100 @@
 import sys
+sys.path.insert(0,'..')
 import os
 import yaml
 import tgt
 import librosa
 import pickle
+import re
+import unicodedata
 
-from ..src.utils import AudioProcessor
+from src.utils import AudioProcessor
 
-config = yaml.load(open('../config/config.yaml', 'r'))
+def text_normalize(text, char_set):
+    # Strip accents
+    text = ''.join(char for char in unicodedata.normalize('NFD', text) \
+        if unicodedata.category(char) != 'Mn')
+    text = text.lower()
+    text = re.sub("[^{}]".format(char_set), " ", text)
+    text = re.sub("[ ]+", " ", text).strip()
+    return text
 
-ap_kwargs = config["audio"]
-ap = AudioProcessor(**ap_kwargs)
+def get_per_frame_phn(ap, tg, mag_len):
+    endoff_phn_list = []
+    phn_bounds = tg.get_tier_by_name('phones').intervals
+    for phn_bound in phn_bounds:
+        s_t = int(float(phn_bound.start_time) * ap.sr)
+        e_t = int(float(phn_bound.end_time) * ap.sr)
+        print(s_t, e_t, phn_bound.text)
+        endoff_phn_list.append((e_t, phn_bound.text))
 
-align_res_path = config['path']['align_result']
-data_dir = config['path']['all_data_dir']
-feat_dir = config['path']['feat_dir']
-meta_path = config['path']['meta_path']
-meta = open(meta_path, 'w')
+    per_frame_phn = []
+    end_idx = 0
+    for m_idx in range(mag_len):
+        offset = m_idx * ap.hop_length
+        if offset < endoff_phn_list[end_idx][0]:
+            per_frame_phn.append(endoff_phn_list[end_idx][1])
+        else:
+            end_idx = min(end_idx+1, len(endoff_phn_list)-1)
+            per_frame_phn.append(endoff_phn_list[end_idx][1])
+    assert len(per_frame_phn) == mag_len
 
-for dirPath, dirNames, fileNames in os.walk(align_res_path):
-    for f in fileNames:
-        f_id = f.replace('.Textgrid', '')
-        tgtpath = os.path.join(dirPath, f)
-        tg = tgt.io.read_textgrid(tgtpath)
-        wavpath = os.path.join(data_dir, tgtname.strip().split('/')[-1]).replace('.Textgrid', '.wav')
-        textpath = os.path.join(data_dir, tgtname.strip().split('/')[-1]).replace('.Textgrid', '.txt')
-        featpath = os.path.join(feat_dir, )
+    return per_frame_phn
 
-        wav = ap.load_wav(wavpath)
-        mag = ap.spectrogram(wav)
-        mel = ap.melspectrogram(wav)
-        MC, f0, AP = ap.get_MCEPs(wav)
-        print(mag.shape, mel.shape, MC.shape, f0.shape, AP.shape)
-        text = open(textpath).readline().strip().lower()
-        print(text)
+def main():
+    config = yaml.load(open('../config/config.yaml', 'r'))
+    ap_kwargs = config["audio"]
+    ap = AudioProcessor(**ap_kwargs)
 
-        # sentence level (one sentence to many phns)
-        if s_level:
-            phn_bounds = tg.get_tier_by_name('phones').intervals
+    align_res_path = config['path']['align_result']
+    data_dir = config['path']['all_data_dir']
+    feat_dir = config['path']['feat_dir']
+    if not os.path.exists(feat_dir):
+        os.makedirs(feat_dir)
+    char_set = config['text']['char_set']
+    meta_path = config['path']['meta_path']
+    all_meta = []
 
+    # for acoustic features
+    for dirPath, dirNames, fileNames in os.walk(align_res_path):
+        for f in fileNames:
+            f_id = f.replace('.TextGrid', '')
+            tgtpath = os.path.join(dirPath, f)
+            wavpath = os.path.join(data_dir, f_id+'.wav')
+            textpath = os.path.join(data_dir, f_id+'.lab')
+            featpath = os.path.join(feat_dir, f_id+'.pkl')
 
-            for phn_bound in phn_bounds:
-                s_t = int(float(phn_bound.start_time) * sample_rate)
-                e_t = int(float(phn_bound.end_time) * sample_rate)
-                print(s_t, e_t, phn_bound.text)
+            wav = ap.load_wav(wavpath)
+            mag, mel = ap.get_spec(wav)
+            MC, f0, AP = ap.get_MCEPs(wav)
 
-            meta.write("{}|{}|{}\n".format(f_id, text, featpath,))
-        exit()
+            text = open(textpath).readline().strip().lower()
+            text = text_normalize(text, char_set)
+            tg = tgt.io.read_textgrid(tgtpath)
+            per_frame_phn = get_per_frame_phn(ap, tg, len(mag))
+
+            feat = {
+                'f_id': f_id,
+                'mag': mag, 'mel': mel,
+                'MC': MC, 'f0': f0, 'AP': AP,
+                'phn': per_frame_phn
+            }
+            with open(featpath, 'wb') as f:
+                pickle.dump(feat, f)
+            all_meta.append((f_id, text))
+
+    # for metas
+    with open(meta_path, 'w') as f:
+        for meta in sorted(all_meta):
+            f.write("{}|{}\n".format(meta[0], meta[1]))
+
+    return
+
+if __name__ == '__main__':
+    main()
 
 '''
+### deprecated ###
 # word level (one word to many phns)
 if w_level:
     word_bounds = tg.get_tier_by_name('words').intervals
@@ -60,8 +106,8 @@ if w_level:
             word_bound.end_time
         )
         for phn_bound in phn_bounds:
-            p_s_t = int(float(phn_bound.start_time) * sample_rate) - w_s_t
-            p_e_t = int(float(phn_bound.end_time) * sample_rate) - w_s_t
+            p_s_t = int(float(phn_bound.start_time) * ap.sr) - w_s_t
+            p_e_t = int(float(phn_bound.end_time) * ap.sr) - w_s_t
             print(p_s_t, p_e_t, phn_bound.text)
 '''
 '''

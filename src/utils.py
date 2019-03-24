@@ -9,7 +9,6 @@ import librosa
 import librosa.filters
 import pyworld as pw
 import pysptk
-from pysptk.synthesis import LMADF, MLSADF, Synthesizer
 from scipy import signal
 
 class AudioProcessor(object):
@@ -48,17 +47,29 @@ class AudioProcessor(object):
     def spectrogram(self, wav):
         D = self._stft(self.preemphasis(wav))
         S = self._amp_to_db(np.abs(D)) - self.ref_level_db
-        return self._normalize(S)
+        return self._normalize(S).T
 
     def inv_spectrogram(self, linear_spect):
         '''Converts spectrogram to waveform using librosa'''
+        linear_spect = linear_spect.T
         S = self._db_to_amp(self._denormalize(linear_spect) + self.ref_level_db)
         return self.inv_preemphasis(self._griffin_lim(S ** self.power))
 
     def melspectrogram(self, wav):
         D = self._stft(self.preemphasis(wav))
         S = self._amp_to_db(self._linear_to_mel(np.abs(D)))
-        return self._normalize(S)
+        return self._normalize(S).T
+
+    def get_spec(self, wav):
+        ''' get mag and mel at the same time'''
+        D = self._stft(self.preemphasis(wav))
+        mag_sp = np.abs(D)
+        mel_sp = self._linear_to_mel(mag_sp)
+
+        mag = self._normalize(self._amp_to_db(mag_sp) - self.ref_level_db).T
+        mel = self._normalize(self._amp_to_db(mel_sp)).T
+
+        return mag, mel
 
     def _griffin_lim(self, S):
         '''librosa implementation of Griffin-Lim
@@ -94,6 +105,7 @@ class AudioProcessor(object):
         return (np.clip(x, 0, 1) * -self.min_level_db) + self.min_level_db
 
     def get_MCEPs(self, wav):
+        wav = np.float64(wav)
         _f0_h, t_h = pw.harvest(wav, self.sr)
         f0_h = pw.stonemask(wav, _f0_h, t_h, self.sr)
         sp_h = pw.cheaptrick(wav, f0_h, t_h, self.sr)
@@ -103,7 +115,7 @@ class AudioProcessor(object):
         return mc, f0_h, ap_h
 
     def MCEPs2wav(self, mc, f0, ap):
-        sp = pysptk.mc2sp(np.float64(mc), alpha=self.alpha, fftlen=self.n_fft)
+        sp = pysptk.mc2sp(np.float64(mc),alpha=self.alpha, fftlen=self.n_fft)
         y = pw.synthesize(np.float64(f0), np.float64(sp), np.float64(ap), self.sr, pw.default_frame_period)
 
         return y.astype(np.float32)
