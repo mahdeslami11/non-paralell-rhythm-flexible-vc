@@ -1,3 +1,6 @@
+text:
+    char_set: "PE abcdefghijklmnopqrstuvwxyz'.?"
+
 audio:
     n_mels: 80
     n_fft: 1024
@@ -7,7 +10,7 @@ audio:
     preemphasis: 0.97
     min_level_db: -100
     ref_level_db: 20
-    power: 1.5
+    power: 1
     griffin_lim_iters: 200
     order: 25
     alpha: 0.42
@@ -35,7 +38,7 @@ solver:
     checkpoint_interval: 2000
 
 path:
-    align_result: "/home_local/hoa/Desktop/non-parallel-rhythm-flexible-VC/data/VCTK_aligned_result"
+    align_result: "/home_local/hoa/Desktop/non-parallel-rhythm-flexible-VC/data/VCTK_aligned_result/aligned_result"
     all_data_dir: "/home_local/hoa/Desktop/non-parallel-rhythm-flexible-VC/data/VCTK-Corpus/for_align"
     meta_path: "/home_local/hoa/Desktop/non-parallel-rhythm-flexible-VC/data/meta.txt"
     feat_dir: "/home_local/hoa/Desktop/non-parallel-rhythm-flexible-VC/data/feat"
