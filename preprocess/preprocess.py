@@ -12,8 +12,8 @@ from src.utils import AudioProcessor
 
 def text_normalize(text, char_set):
     # Strip accents
-    text = ''.join(char for char in unicodedata.normalize('NFD', text) \
-        if unicodedata.category(char) != 'Mn')
+    text = ''.join(char for char in unicodedata.normalize("NFD", text) \
+        if unicodedata.category(char) != "Mn")
     text = text.lower()
     text = re.sub("[^{}]".format(char_set), " ", text)
     text = re.sub("[ ]+", " ", text).strip()
