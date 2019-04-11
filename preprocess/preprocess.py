@@ -1,9 +1,11 @@
 import sys
 sys.path.insert(0,'..')
 import os
+from collections import defaultdict
 import yaml
 import tgt
 import librosa
+import numpy as np
 import pickle
 import re
 import unicodedata
@@ -52,7 +54,13 @@ def main():
     if not os.path.exists(feat_dir):
         os.makedirs(feat_dir)
     char_set = config['text']['char_set']
-    meta_path = config['path']['meta_path']
+    train_meta_path = config['path']['train_meta_path']
+    eval_meta_path = config['path']['eval_meta_path']
+    test_meta_path = config['path']['test_meta_path']
+    train_part = config['preprocess']['data_split']['train']
+    eval_part = config['preprocess']['data_split']['eval']
+    test_part = config['preprocess']['data_split']['test']
+    leave_out_spk_id = config['preprocess']['leave_out_spk_id'].split(' ')
     all_meta = []
 
     # for acoustic features
@@ -70,6 +78,7 @@ def main():
 
             text = open(textpath).readline().strip().lower()
             text = text_normalize(text, char_set)
+
             tg = tgt.io.read_textgrid(tgtpath)
             per_frame_phn = get_per_frame_phn(ap, tg, len(mag))
 
@@ -81,13 +90,34 @@ def main():
             }
             with open(featpath, 'wb') as f:
                 pickle.dump(feat, f)
+            '''
             all_meta.append((f_id, text))
 
+    speaker2uttrs = defaultdict(list)
+    for meta in sorted(all_meta):
+        spk_id = meta[0].split('_')[0]
+        speaker2uttrs[spk_id].append(meta)
+    
+    for x in speaker2uttrs:
+        print(x, len(speaker2uttrs[x]))
+    
     # for metas
-    with open(meta_path, 'w') as f:
-        for meta in sorted(all_meta):
-            f.write("{}|{}\n".format(meta[0], meta[1]))
-
+    with open(train_meta_path, 'w') as tr, open(eval_meta_path, 'w') as ev, \
+            open(test_meta_path, 'w') as te:
+        for spk_id in sorted(speaker2uttrs):
+            metas = np.array(speaker2uttrs[spk_id])
+            if spk_id in leave_out_spk_id:
+                for meta in metas:
+                    te.write("{}|{}\n".format(meta[0], meta[1]))
+            else:
+                l = len(metas)
+                tests, evals, trains = np.split(metas, [int(test_part*l), int((test_part+eval_part)*l)])
+                for meta in trains:
+                    tr.write("{}|{}\n".format(meta[0], meta[1]))
+                for meta in evals:
+                    ev.write("{}|{}\n".format(meta[0], meta[1]))
+                for meta in tests:
+                    te.write("{}|{}\n".format(meta[0], meta[1]))
     return
 
 if __name__ == '__main__':
