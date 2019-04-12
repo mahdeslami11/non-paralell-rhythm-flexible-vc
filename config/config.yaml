@@ -4,6 +4,7 @@ text:
 audio:
     n_mels: 80
     n_fft: 1024
+    phn_dim: 70
     sample_rate: 16000
     frame_length_ms: 50
     frame_shift_ms: 12.5
@@ -23,22 +24,26 @@ model:
         weight_decay: 0.0
         adam_beta1: 0.9
         adam_beta2: 0.999
-    tacotron :
-        n_vocab: 250
-        embedding_dim: 256
-        mel_dim: 80
-        linear_dim: 1025
-        r: 5
-        use_memory_mask: False
 
 solver:
-    n_jobs: 4
+    use_gpu: True
+    num_workers: 4
     batch_size: 16
     total_steps: 300000
     checkpoint_interval: 2000
 
+preprocess:
+    leave_out_spk_id: "p258 p277 p330 p315"
+    data_split:
+        train: 0.8
+        eval: 0.1
+        test: 0.1
+
 path:
     align_result: "/home_local/hoa/Desktop/non-parallel-rhythm-flexible-VC/data/VCTK_aligned_result/aligned_result"
     all_data_dir: "/home_local/hoa/Desktop/non-parallel-rhythm-flexible-VC/data/VCTK-Corpus/for_align"
-    meta_path: "/home_local/hoa/Desktop/non-parallel-rhythm-flexible-VC/data/meta.txt"
+    train_meta_path: "/home_local/hoa/Desktop/non-parallel-rhythm-flexible-VC/data/train_meta.txt"
+    eval_meta_path: "/home_local/hoa/Desktop/non-parallel-rhythm-flexible-VC/data/eval_meta.txt"
+    test_meta_path: "/home_local/hoa/Desktop/non-parallel-rhythm-flexible-VC/data/test_meta.txt"
     feat_dir: "/home_local/hoa/Desktop/non-parallel-rhythm-flexible-VC/data/feat"
+    phn_dict_path: "/home_local/hoa/Desktop/non-parallel-rhythm-flexible-VC/data/phn_map.txt"
