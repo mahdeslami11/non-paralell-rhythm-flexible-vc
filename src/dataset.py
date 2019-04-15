@@ -38,7 +38,7 @@ class VCTKDataset(Dataset):
         with open(dict_path) as f:
             for line in f:
                 phn, num = line.strip().split(' ')
-                phone_dict[phn] = num
+                phone_dict[phn] = int(num)
         return phone_dict
 
     def _get_path(self, feat_dir, meta_path):
@@ -50,17 +50,36 @@ class VCTKDataset(Dataset):
                 feat_paths.append(feat_path)
         return feat_paths
 
-    def _my_pad(self, *args):
-        result = []
-        for arg in args:
-            max_len = max([len(x) for x in arg])
-            batch = [
-                np.pad(x[0], [[0, max_len - len(x)], [0, 0]], 'constant')
-                for x in arg
-            ]
-            result.append(batch)
-        assert len(args) == len(result)
-        return result
+    def _pad_1d(self, _input, max_len):
+        padded = [
+            np.pad(x, (0, max_len - len(x)), 'constant')
+            for x in _input
+        ]
+        return padded
+
+    def _pad_2d(self, _input, max_len):
+        padded = [
+            np.pad(x, [[0, max_len - len(x)], [0, 0]], 'constant')
+            for x in _input
+        ]
+        return padded
+
+    def _my_pad(self, batch):
+        component_num = len(batch[0])
+        padded_batch = []
+        max_lens = [max([len(x[i]) for x in batch]) for i in range(component_num)]
+        for idx in range(component_num):
+            not_pad = [x[idx] for x in batch]
+            dims = len(batch[0][idx].shape)
+            if dims == 1:
+                padded = self._pad_1d(not_pad, max_lens[idx])
+            elif dims == 2:
+                padded = self._pad_2d(not_pad, max_lens[idx])
+            else:
+                raise NotImplementedError()
+            padded_batch.append(padded)
+        assert len(batch) == len(padded_batch[0])
+        return padded_batch
 
     def __getitem__(self):
         raise NotImplementedError()
@@ -79,18 +98,18 @@ class PPR_VCTKDataset(VCTKDataset):
         with open(self.feat_paths[index], 'rb') as f:
             feat = pickle.load(f)
             mel, phn_seq = feat['mel'], feat['phn']
-            label = [self.phone_dict[phn] for phn in phn_seq.strip().split(' ')]
+            label = [self.phone_dict[phn] for phn in phn_seq]
         return mel, label
 
     def _collate_fn(self, batch):
-        # batch: list of (feat_batch, label_batch) from __getitem__
+        # batch: list of (mel, label) from __getitem__
 
         # Dynamic padding.
-        feat_batch, label_batch = _my_pad(batch)
-        feat_batch = torch.as_tensor(feat_batch)
-        label_batch = torch.as_tensor(label_batch)
+        mel_batch, label_batch = self._my_pad(batch)
+        mel_batch = torch.as_tensor(mel_batch, dtype=torch.float)
+        label_batch = torch.as_tensor(label_batch, dtype=torch.int)
 
-        return feat_batch, label_batch
+        return mel_batch, label_batch
 
 class PPTS_VCTKDataset(VCTKDataset):
     def __init__(self,
@@ -115,7 +134,7 @@ class PPTS_VCTKDataset(VCTKDataset):
         # batch: list of (feat_batch, label_batch) from __getitem__
 
         # Dynamic padding.
-        phn_batch, mag_batch = _my_pad(batch)
+        phn_batch, mag_batch = self._my_pad(batch)
         phn_batch = torch.as_tensor(phn_batch)
         mag_batch = torch.as_tensor(mag_batch)
 

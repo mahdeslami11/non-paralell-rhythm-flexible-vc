@@ -5,6 +5,17 @@ import torch.nn as nn
 from modules import Prenet, CBHG, GLU, CIG_block
 from attention import AttnLayer, LocAwareAttnLayer
 
+class OnehotEncoder(nn.Module):
+    def __init__(self, n_class):
+        super(OnehotEncoder, self).__init__()
+        self.encoder = nn.Embedding(n_class, n_class)
+        self.encoder.weight.data = torch.eye(n_class)
+        for param in self.encoder.parameters():
+            param.requires_grad = False
+
+    def forward(self, batch):
+        return self.encoder(batch.cpu())
+
 class PPR(nn.Module):
     def __init__(self, input_dim, output_dim, dropout_rate=0.5,
                  prenet_hidden_dims=[256, 128], K=16,

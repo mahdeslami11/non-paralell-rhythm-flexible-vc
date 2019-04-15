@@ -90,7 +90,7 @@ def main():
             }
             with open(featpath, 'wb') as f:
                 pickle.dump(feat, f)
-            '''
+            
             all_meta.append((f_id, text))
 
     speaker2uttrs = defaultdict(list)
