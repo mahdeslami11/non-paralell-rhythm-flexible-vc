@@ -37,7 +37,7 @@ model:
 solver:
     use_gpu: True
     num_workers: 4
-    batch_size: 16
+    batch_size: 32
     total_steps: 300000
     log_interval: 20
     summ_interval: 200
@@ -58,6 +58,11 @@ path:
     test_meta_path: "/home_local/hoa/Desktop/non-parallel-rhythm-flexible-VC/data/test_meta.txt"
     feat_dir: "/home_local/hoa/Desktop/non-parallel-rhythm-flexible-VC/data/feat"
     phn_dict_path: "/home_local/hoa/Desktop/non-parallel-rhythm-flexible-VC/data/phn_map.txt"
-    log_dir: "/home_local/hoa/Desktop/non-parallel-rhythm-flexible-VC/logs"
-    save_dir: "/home_local/hoa/Desktop/non-parallel-rhythm-flexible-VC/saved_models"
-    ppr_output_dir: "/home_local/hoa/Desktop/non-parallel-rhythm-flexible-VC/data/phn_hat"
+    ppr:
+        log_dir: "/home_local/hoa/Desktop/non-parallel-rhythm-flexible-VC/ppr_logs"
+        save_dir: "/home_local/hoa/Desktop/non-parallel-rhythm-flexible-VC/ppr_saved_models"
+        output_dir: "/home_local/hoa/Desktop/non-parallel-rhythm-flexible-VC/data/phn_hats"
+    ppts:
+        log_dir: "/home_local/hoa/Desktop/non-parallel-rhythm-flexible-VC/ppts_logs"
+        save_dir: "/home_local/hoa/Desktop/non-parallel-rhythm-flexible-VC/ppts_saved_models"
+        output_dir: "/home_local/hoa/Desktop/non-parallel-rhythm-flexible-VC/data/ppts_results"

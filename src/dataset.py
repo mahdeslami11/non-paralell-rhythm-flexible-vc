@@ -107,7 +107,9 @@ class PPR_VCTKDataset(VCTKDataset):
             with open(path, 'rb') as f:
                 feat = pickle.load(f)
                 mel, phn_seq = feat['mel'], feat['phn']
-                label = [self.phone_dict[phn] for phn in phn_seq]
+                # 1 for "sil", preventing OOV
+                label = [self.phone_dict[phn] if phn in self.phone_dict else 1 \
+                        for phn in phn_seq]
                 if feat['f_id'].split('_')[0][1:] in need:
                     self.f_ids.append(feat['f_id'])
                     self.mels.append(np.array(mel))
