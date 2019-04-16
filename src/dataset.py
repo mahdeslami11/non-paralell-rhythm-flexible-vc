@@ -91,25 +91,40 @@ class PPR_VCTKDataset(VCTKDataset):
     def __init__(self,
                  feat_dir,
                  meta_path,
-                 dict_path):
+                 dict_path,
+                 mode='train'):
         super(PPR_VCTKDataset, self).__init__(feat_dir, meta_path, dict_path)
+        self.mode = mode
 
     def __getitem__(self, index):
         with open(self.feat_paths[index], 'rb') as f:
             feat = pickle.load(f)
             mel, phn_seq = feat['mel'], feat['phn']
             label = [self.phone_dict[phn] for phn in phn_seq]
-        return mel, label
+
+        if self.mode == 'train':
+            return np.array(mel), np.array(label)
+        elif self.mode == 'test':
+            return feat['f_id'], np.array(mel), np.array(label)
+        else:
+            raise NotImplementedError()
 
     def _collate_fn(self, batch):
-        # batch: list of (mel, label) from __getitem__
+        # batch: list of (mel, label) or (f_id, mel, label) from __getitem__
 
+        batch = batch if self.mode == 'train' else batch[1:]
         # Dynamic padding.
         mel_batch, label_batch = self._my_pad(batch)
         mel_batch = torch.as_tensor(mel_batch, dtype=torch.float)
-        label_batch = torch.as_tensor(label_batch, dtype=torch.int)
+        label_batch = torch.as_tensor(label_batch, dtype=torch.long)
 
-        return mel_batch, label_batch
+        if self.mode == 'train':
+            return mel_batch, label_batch
+        elif self.mode == 'test':
+            f_ids = [x[0] for x in batch]
+            return f_ids, mel_batch, label_batch
+        else:
+            raise NotImplementedError()
 
 class PPTS_VCTKDataset(VCTKDataset):
     def __init__(self,

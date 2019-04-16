@@ -1,4 +1,5 @@
 import os
+import pickle
 import torch
 from tensorboardX import SummaryWriter
 from torch.nn import functional as F
@@ -32,7 +33,7 @@ class PPR_Solver(Solver):
         super(PPR_Solver, self).__init__(config, args)
 
         self.n_mels = config['audio']['n_mels']
-        self.phn_dim = config['audio']['phn_dim']
+        self.phn_dim = config['text']['phn_dim']
 
         self.lr = config['model']['ppr']['lr']
         self.optimizer_type = config['model']['ppr']['type']
@@ -52,6 +53,7 @@ class PPR_Solver(Solver):
         self.log_dir = config['path']['log_dir']
         self.save_dir = config['path']['save_dir']
         self.writer = SummaryWriter(self.log_dir)
+        self.ppr_output_dir = config['path']['ppr_output_dir']
         
         # attempt to load or set gs and epoch to 0
         self.load_ckpt()
@@ -60,7 +62,8 @@ class PPR_Solver(Solver):
         dataset = PPR_VCTKDataset(
             feat_dir=self.feat_dir,
             meta_path=meta_path,
-            dict_path=self.dict_path
+            dict_path=self.dict_path,
+            mode=self.mode
         )
         dataloader = DataLoader(
             dataset, batch_size=self.batch_size,
@@ -123,11 +126,22 @@ class PPR_Solver(Solver):
     def _label_smoothing(self, label_hat, label_batch):
         # label_hat: log-likelihood, label_batch: list of int
         eps = 0.05
+        print(label_batch)
+        exit()
         one_hot = self.one_hot_encoder(label_batch)
         one_hot = one_hot * (1 - eps) + (1 - one_hot) * eps / (label_hat.shape[-1] - 1)
         one_hot = one_hot.to(self.device)
         loss = -(one_hot * label_hat).sum(-1).mean()
         return loss
+
+    def _calc_acc(label_hat, label_batch):
+        if isinstance(label_hat, torch.Tensor):
+            label_hat = label_hat.detach().cpu().numpy()
+        if isinstance(label_batch, torch.Tensor):
+            label_batch = label_batch.detach().cpu().numpy()
+        pred = np.argmax(label_hat, axis=2)
+        acc = np.mean(pred == label_batch)
+        return acc
 
     def train(self):
         epoch_loss = 0.0
@@ -174,10 +188,8 @@ class PPR_Solver(Solver):
         return
 
     def eval(self):
-        def _calc_ac(label_hat, label_batch):
-            return 0
         eval_loss = 0.0
-        avg_ac = 0.0
+        avg_acc = 0.0
         self.model.eval()
         with torch.no_grad():
             for idx, (mel_batch, label_batch) in enumerate(eval_loader):
@@ -185,22 +197,42 @@ class PPR_Solver(Solver):
                 label_hat = self.model(mel_batch)
                 loss = F.nll_loss(torch.transpose(label_hat, 1, 2), label_batch)
                 eval_loss += loss.item()
-                #ac = _calc_ac(label_hat, label_batch)
-                avg_ac += ac
+                acc = self._calc_acc(label_hat, label_batch)
+                avg_acc += acc
 
                 if idx % 100 == 0:
                     break
 
         eval_loss /= (idx+1)
-        avg_ac /= (idx+1)
+        avg_acc /= (idx+1)
         print('[eval %d] eval_loss: %.6f' % (epoch+1, eval_loss))
-        print('[eval %d] eval_ac: %.6f' % (epoch+1, avg_ac))
+        print('[eval %d] eval_acc: %.6f' % (epoch+1, avg_acc))
 
         self.writer.add_scalar('eval/eval_loss', eval_loss, self.epoch)
-        self.writer.add_scalar('eval/accuracy', avg_ac, self.epoch)
+        self.writer.add_scalar('eval/accuracy', avg_acc, self.epoch)
         self.writer.add_image('eval/label_hat',
             torch.t(torch.exp(label_hat[0])).detach().cpu().numpy(),
             self.epoch, dataformats='HW'
         )
 
         return
+
+    def save_label_hat(self, f_id_list, label_hat):
+        for idx in len(f_id_list):
+            out_name = "{}_phn_hat.pkl".format(f_id_list[idx])
+            out_path = os.path.join(self.ppr_output_dir, out_name)
+            with open(out_path, 'wb') as f:
+                pickle.dump(label_hat[idx], f)
+        return
+
+    def test(self):
+        if not os.path.exists(self.ppr_output_dir):
+            os.makedirs(self.ppr_output_dir)
+        self.model.eval()
+        with torch.no_grad():
+            for (f_id_list, mel_batch, label_batch) in test_loader:
+                mel_batch, label_batch = mel_batch.to(self.device), label_batch.to(self.device)
+                label_hat = self.model(mel_batch).detach().cpu().numpy()
+                self.save_label_hat(f_id_list, label_hat)
+        return
+

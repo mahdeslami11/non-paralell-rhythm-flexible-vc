@@ -127,12 +127,3 @@ def plot_alignment(alignment, gs, idx):
     fig.colorbar(im)
     plt.title('{} Steps'.format(gs))
     plt.savefig('{}/alignment_{}_{}k.png'.format(hp.log_dir, idx, gs//1000), format='png')
-
-def my_shuffle(*args):
-    randomize = np.arange(len(args[0]))
-    np.random.shuffle(randomize)
-    res = [x[randomize] for x in args]
-    if len(res) >= 2:
-        return res
-    else:
-        return res[0]
