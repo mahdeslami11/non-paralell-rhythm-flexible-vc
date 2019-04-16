@@ -2,8 +2,8 @@ import numpy as np
 import torch
 import torch.nn as nn
 
-from modules import Prenet, CBHG, GLU, CIG_block
-from attention import AttnLayer, LocAwareAttnLayer
+from .modules import Prenet, CBHG, GLU, CIG_block
+from .attention import AttnLayer, LocAwareAttnLayer
 
 class OnehotEncoder(nn.Module):
     def __init__(self, n_class):

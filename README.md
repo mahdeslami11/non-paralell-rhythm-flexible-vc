@@ -10,3 +10,7 @@ PyTorch implementation of:
 5. Run `preprocess.py` to generate acoustic features with corresponding phone label
 
 # Network
+
+# Notes
+1. Perhaps not to use dataloader at inference time?
+2. phoneme 'spn' means Unknown in MFA, so currently map it with 'sp' to id 0 as well.

@@ -1,5 +1,5 @@
 import yaml
-from src.solver import PPR_Solver, PPTS_Solver, UPPT_Solver
+from src.solver import PPR_Solver, PPTS_Solver
 
 config = yaml.load(open('./config/config.yaml'))
 s = PPR_Solver(config, None, 'train')

@@ -95,7 +95,34 @@ class PPR_VCTKDataset(VCTKDataset):
                  mode='train'):
         super(PPR_VCTKDataset, self).__init__(feat_dir, meta_path, dict_path)
         self.mode = mode
+        self._load_feat()
 
+    def _load_feat(self):
+        need = "340 231 257 363 250 285 266 361 360 256 306 301 303 376 265 268 341 251".split(' ')
+
+        self.f_ids = []
+        self.mels = []
+        self.labels = []
+        for path in self.feat_paths:
+            with open(path, 'rb') as f:
+                feat = pickle.load(f)
+                mel, phn_seq = feat['mel'], feat['phn']
+                label = [self.phone_dict[phn] for phn in phn_seq]
+                if feat['f_id'].split('_')[0][1:] in need:
+                    self.f_ids.append(feat['f_id'])
+                    self.mels.append(np.array(mel))
+                    self.labels.append(np.array(label))
+        return
+
+    def __getitem__(self, index):
+        if self.mode == 'train':
+            return self.mels[index], self.labels[index]
+        elif self.mode == 'test':
+            return self.f_id[index], self.mels[index], self.labels[index]
+        else:
+            raise NotImplementedError()
+
+    '''
     def __getitem__(self, index):
         with open(self.feat_paths[index], 'rb') as f:
             feat = pickle.load(f)
@@ -108,7 +135,7 @@ class PPR_VCTKDataset(VCTKDataset):
             return feat['f_id'], np.array(mel), np.array(label)
         else:
             raise NotImplementedError()
-
+    '''
     def _collate_fn(self, batch):
         # batch: list of (mel, label) or (f_id, mel, label) from __getitem__
 
@@ -131,9 +158,9 @@ class PPTS_VCTKDataset(VCTKDataset):
                  feat_dir,
                  meta_path,
                  dict_path,
-                 phn_hat_dir):
+                 phn_hat_dir,
+                 mode='train'):
         super(PPTS_VCTKDataset, self).__init__(feat_dir, meta_path, dict_path)
-
         self.phn_hat_paths = [p.replace(feat_dir, phn_hat_dir) for p in self.feat_paths]
 
     def __getitem__(self, index):
