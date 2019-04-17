@@ -22,7 +22,7 @@ model:
         type: "Adam"
         betas: "0.9, 0.999"
         weight_decay: 0.0
-        label_smoothing: True
+        label_smoothing: False
         grad_clip: 1.0
     ppts:
         lr: 0.001
@@ -40,8 +40,8 @@ solver:
     batch_size: 32
     total_steps: 300000
     log_interval: 20
-    summ_interval: 200
-    ckpt_interval: 2000
+    summ_interval: 20
+    ckpt_interval: 20
 
 preprocess:
     leave_out_spk_id: "p258 p277 p330 p315"

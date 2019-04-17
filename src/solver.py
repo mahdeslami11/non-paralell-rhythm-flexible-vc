@@ -1,5 +1,6 @@
 import os
 import pickle
+import numpy as np
 import torch
 from tensorboardX import SummaryWriter
 from torch.nn import functional as F
@@ -12,6 +13,8 @@ from .dataset import PPR_VCTKDataset, PPTS_VCTKDataset, UPPT_VCTKDataset
 class Solver(object):
     def __init__(self, config, args):
         self.use_gpu = config['solver']['use_gpu'] and torch.cuda.is_available()
+        if self.use_gpu:
+            print('Using {} GPUs!'.format(torch.cuda.device_count()))
         self.device = torch.device('cuda') if self.use_gpu else torch.device('cpu')
         self.config = config
         self.args = args
@@ -89,7 +92,7 @@ class PPR_Solver(Solver):
         )
         dataloader = DataLoader(
             dataset, batch_size=self.batch_size,
-            shuffle=True if self.mode == 'train' else False,
+            shuffle=True if self.mode != 'test' else False,
             num_workers=self.num_workers,
             collate_fn=dataset._collate_fn, pin_memory=True
         )
@@ -113,6 +116,8 @@ class PPR_Solver(Solver):
         return optimizer
 
     def save_ckpt(self):
+        if not os.path.exists(self.save_dir):
+            os.makedirs(self.save_dir)
         checkpoint_path = os.path.join(
             self.save_dir, "model.ckpt-{}.pt".format(self.global_step)
         )
@@ -122,6 +127,7 @@ class PPR_Solver(Solver):
             "global_step": self.global_step,
             "epoch": self.epoch
         }, checkpoint_path)
+        print("Checkpoint model.ckpt-{}.pt saved.".format(self.global_step))
         with open(os.path.join(self.save_dir, "checkpoint"), "w") as f:
             f.write("model.ckpt-{}".format(self.global_step))
         return
@@ -130,19 +136,21 @@ class PPR_Solver(Solver):
         checkpoint_list = os.path.join(self.save_dir, 'checkpoint')
         if os.path.exists(checkpoint_list):
             checkpoint_filename = open(checkpoint_list).readline().strip()
-            checkpoint_path = os.path.join(hp.save_dir, "{}.pt".format(checkpoint_filename))
+            checkpoint_path = os.path.join(self.save_dir, "{}.pt".format(checkpoint_filename))
             if self.use_gpu:
                 checkpoint = torch.load(checkpoint_path)
             else:
                 checkpoint = torch.load(checkpoint_path, map_location=torch.device('cpu'))
             self.model.load_state_dict(checkpoint['model'])
             if self.mode == 'train':
-                self.optimizer.load_state_dict(checkpoint['model'])
+                self.optimizer.load_state_dict(checkpoint['optimizer'])
             self.global_step = checkpoint['global_step']
             self.epoch = checkpoint['epoch']
+            print("Checkpoint model.ckpt-{}.pt loaded.".format(self.global_step))
         else:
             self.global_step = 0
             self.epoch = 0
+            print("Start training with new parameters.")
         return
 
     def _label_smoothing(self, label_hat, label_batch):
@@ -154,7 +162,7 @@ class PPR_Solver(Solver):
         loss = -(one_hot * label_hat).sum(-1).mean()
         return loss
 
-    def _calc_acc(label_hat, label_batch):
+    def _calc_acc(self, label_hat, label_batch):
         if isinstance(label_hat, torch.Tensor):
             label_hat = label_hat.detach().cpu().numpy()
         if isinstance(label_batch, torch.Tensor):
@@ -181,7 +189,7 @@ class PPR_Solver(Solver):
             # Logging
             if self.global_step % self.log_interval == 0:
                 print(
-                    '[GS=%3d, %d, %3d] loss: %.6f' % \
+                    '[GS=%3d, epoch=%d, idx=%3d] loss: %.6f' % \
                     (self.global_step+1, self.epoch+1, idx+1, loss.item())
                 )
             if self.global_step % self.summ_interval == 0:
@@ -198,7 +206,11 @@ class PPR_Solver(Solver):
 
         epoch_loss /= (idx+1)
         print('[epoch %d] training_loss: %.6f' % (self.epoch + 1, epoch_loss))
-        self.writer.add_scalar('train/epoch_training_loss', epoch_loss, epoch)
+        self.writer.add_scalar('train/epoch_training_loss', epoch_loss, self.epoch)
+        self.writer.add_image(
+            'train/label_gt', torch.t(self.one_hot_encoder(label_batch[0])).detach().cpu().numpy(),
+            self.epoch, dataformats='HW'
+        )
         self.writer.add_image(
             'train/label_hat', torch.t(torch.exp(label_hat[0])).detach().cpu().numpy(),
             self.epoch, dataformats='HW'
@@ -212,7 +224,7 @@ class PPR_Solver(Solver):
         avg_acc = 0.0
         self.model.eval()
         with torch.no_grad():
-            for idx, (mel_batch, label_batch) in enumerate(eval_loader):
+            for idx, (mel_batch, label_batch) in enumerate(self.eval_loader):
                 mel_batch, label_batch = mel_batch.to(self.device), label_batch.to(self.device)
                 label_hat = self.model(mel_batch)
                 loss = F.nll_loss(torch.transpose(label_hat, 1, 2), label_batch)
@@ -225,11 +237,15 @@ class PPR_Solver(Solver):
 
         eval_loss /= (idx+1)
         avg_acc /= (idx+1)
-        print('[eval %d] eval_loss: %.6f' % (epoch+1, eval_loss))
-        print('[eval %d] eval_acc: %.6f' % (epoch+1, avg_acc))
+        print('[eval %d] eval_loss: %.6f' % (self.epoch+1, eval_loss))
+        print('[eval %d] eval_acc: %.6f' % (self.epoch+1, avg_acc))
 
         self.writer.add_scalar('eval/eval_loss', eval_loss, self.epoch)
         self.writer.add_scalar('eval/accuracy', avg_acc, self.epoch)
+        self.writer.add_image(
+            'eval/label_gt', torch.t(self.one_hot_encoder(label_batch[0])).detach().cpu().numpy(),
+            self.epoch, dataformats='HW'
+        )
         self.writer.add_image('eval/label_hat',
             torch.t(torch.exp(label_hat[0])).detach().cpu().numpy(),
             self.epoch, dataformats='HW'
@@ -322,6 +338,8 @@ class PPTS_Solver(Solver):
         return optimizer
 
     def save_ckpt(self):
+        if not os.path.exists(self.save_dir):
+            os.makedirs(self.save_dir)
         checkpoint_path = os.path.join(
             self.save_dir, "model.ckpt-{}.pt".format(self.global_step)
         )
@@ -331,6 +349,7 @@ class PPTS_Solver(Solver):
             "global_step": self.global_step,
             "epoch": self.epoch
         }, checkpoint_path)
+        print("Checkpoint model.ckpt-{}.pt saved.".format(self.global_step))
         with open(os.path.join(self.save_dir, "checkpoint"), "w") as f:
             f.write("model.ckpt-{}".format(self.global_step))
         return
@@ -339,19 +358,21 @@ class PPTS_Solver(Solver):
         checkpoint_list = os.path.join(self.save_dir, 'checkpoint')
         if os.path.exists(checkpoint_list):
             checkpoint_filename = open(checkpoint_list).readline().strip()
-            checkpoint_path = os.path.join(hp.save_dir, "{}.pt".format(checkpoint_filename))
+            checkpoint_path = os.path.join(self.save_dir, "{}.pt".format(checkpoint_filename))
             if self.use_gpu:
                 checkpoint = torch.load(checkpoint_path)
             else:
                 checkpoint = torch.load(checkpoint_path, map_location=torch.device('cpu'))
             self.model.load_state_dict(checkpoint['model'])
             if self.mode == 'train':
-                self.optimizer.load_state_dict(checkpoint['model'])
+                self.optimizer.load_state_dict(checkpoint['optimizer'])
             self.global_step = checkpoint['global_step']
             self.epoch = checkpoint['epoch']
+            print("Checkpoint model.ckpt-{}.pt loaded.".format(self.global_step))
         else:
             self.global_step = 0
             self.epoch = 0
+            print("Start training with new parameters.")
         return
 
     def train(self):
@@ -369,7 +390,7 @@ class PPTS_Solver(Solver):
             # Logging
             if self.global_step % self.log_interval == 0:
                 print(
-                    '[GS=%3d, %d, %3d] loss: %.6f' % \
+                    '[GS=%3d, epoch=%d, idx=%3d] loss: %.6f' % \
                     (self.global_step+1, self.epoch+1, idx+1, loss.item())
                 )
             if self.global_step % self.summ_interval == 0:
@@ -386,7 +407,7 @@ class PPTS_Solver(Solver):
 
         epoch_loss /= (idx+1)
         print('[epoch %d] training_loss: %.6f' % (self.epoch + 1, epoch_loss))
-        self.writer.add_scalar('train/epoch_training_loss', epoch_loss, epoch)
+        self.writer.add_scalar('train/epoch_training_loss', epoch_loss, self.epoch)
         self.writer.add_image(
             'train/mag_hat', torch.t(torch.exp(mag_hat[0])).detach().cpu().numpy(),
             self.epoch, dataformats='HW'
@@ -399,7 +420,7 @@ class PPTS_Solver(Solver):
         eval_loss = 0.0
         self.model.eval()
         with torch.no_grad():
-            for idx, (phn_hat_batch, mag_batch) in enumerate(eval_loader):
+            for idx, (phn_hat_batch, mag_batch) in enumerate(self.eval_loader):
                 phn_hat_batch, mag_batch = phn_hat_batch.to(self.device), mag_batch.to(self.device)
                 mag_hat = self.model(phn_hat_batch)
                 loss = self.criterion(mag_hat, mag_batch)
@@ -409,7 +430,7 @@ class PPTS_Solver(Solver):
                     break
 
         eval_loss /= (idx+1)
-        print('[eval %d] eval_loss: %.6f' % (epoch+1, eval_loss))
+        print('[eval %d] eval_loss: %.6f' % (self.epoch+1, eval_loss))
 
         self.writer.add_scalar('eval/eval_loss', eval_loss, self.epoch)
         self.writer.add_image('eval/mag_hat',

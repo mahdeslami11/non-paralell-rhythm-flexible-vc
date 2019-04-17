@@ -42,12 +42,15 @@ class VCTKDataset(Dataset):
         return phone_dict
 
     def _get_path(self, feat_dir, meta_path):
+        need = "340 231 257 363 250 285 266 361 360 256 306 301 303 376 265 268 341 251".split(' ')
         feat_paths = []
         with open(meta_path) as f:
             for line in f:
                 f_id = line.strip().split('|')[0]
-                feat_path = os.path.join(feat_dir, '{}.pkl'.format(f_id))
-                feat_paths.append(feat_path)
+                # only SLT speakers are used
+                if f_id.split('_')[0][1:] in need:
+                    feat_path = os.path.join(feat_dir, '{}.pkl'.format(f_id))
+                    feat_paths.append(feat_path)
         return feat_paths
 
     def _pad_1d(self, _input, max_len):
@@ -98,8 +101,6 @@ class PPR_VCTKDataset(VCTKDataset):
         self._load_feat()
 
     def _load_feat(self):
-        need = "340 231 257 363 250 285 266 361 360 256 306 301 303 376 265 268 341 251".split(' ')
-
         self.f_ids = []
         self.mels = []
         self.labels = []
@@ -107,13 +108,12 @@ class PPR_VCTKDataset(VCTKDataset):
             with open(path, 'rb') as f:
                 feat = pickle.load(f)
                 mel, phn_seq = feat['mel'], feat['phn']
-                # 1 for "sil", preventing OOV
+                # 1 for "sil", preventing OOV phoneme
                 label = [self.phone_dict[phn] if phn in self.phone_dict else 1 \
                         for phn in phn_seq]
-                if feat['f_id'].split('_')[0][1:] in need:
-                    self.f_ids.append(feat['f_id'])
-                    self.mels.append(np.array(mel))
-                    self.labels.append(np.array(label))
+                self.f_ids.append(feat['f_id'])
+                self.mels.append(np.array(mel))
+                self.labels.append(np.array(label))
         return
 
     def __getitem__(self, index):

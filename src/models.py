@@ -27,7 +27,7 @@ class PPR(nn.Module):
             conv1d_bank_hidden_dim, conv1d_projections_hidden_dim, gru_dim
         )
         self.output_trans = nn.Linear(gru_dim*2, output_dim)
-        self.softmax = nn.LogSoftmax()
+        self.softmax = nn.LogSoftmax(dim=-1)
 
     def forward(self, input_x):
         h1 = self.prenet(input_x)
