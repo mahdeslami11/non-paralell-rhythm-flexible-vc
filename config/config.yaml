@@ -22,7 +22,7 @@ model:
         type: "Adam"
         betas: "0.9, 0.999"
         weight_decay: 0.0
-        label_smoothing: False
+        label_smoothing: True
         grad_clip: 1.0
     ppts:
         lr: 0.001
@@ -36,12 +36,12 @@ model:
 
 solver:
     use_gpu: True
-    num_workers: 4
+    num_workers: 0
     batch_size: 32
     total_steps: 300000
     log_interval: 20
-    summ_interval: 20
-    ckpt_interval: 20
+    summ_interval: 200
+    ckpt_interval: 2000
 
 preprocess:
     leave_out_spk_id: "p258 p277 p330 p315"
@@ -59,8 +59,8 @@ path:
     feat_dir: "/home_local/hoa/Desktop/non-parallel-rhythm-flexible-VC/data/feat"
     phn_dict_path: "/home_local/hoa/Desktop/non-parallel-rhythm-flexible-VC/data/phn_map.txt"
     ppr:
-        log_dir: "/home_local/hoa/Desktop/non-parallel-rhythm-flexible-VC/ppr_logs"
-        save_dir: "/home_local/hoa/Desktop/non-parallel-rhythm-flexible-VC/ppr_saved_models"
+        log_dir: "/home_local/hoa/Desktop/non-parallel-rhythm-flexible-VC/ppr_logs_ls"
+        save_dir: "/home_local/hoa/Desktop/non-parallel-rhythm-flexible-VC/ppr_saved_models_ls"
         output_dir: "/home_local/hoa/Desktop/non-parallel-rhythm-flexible-VC/data/phn_hats"
     ppts:
         log_dir: "/home_local/hoa/Desktop/non-parallel-rhythm-flexible-VC/ppts_logs"

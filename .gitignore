@@ -1,4 +1,5 @@
 data/
-logs/
 __pycache__/
 */__pycache__/
+log*/
+*saved_models/
