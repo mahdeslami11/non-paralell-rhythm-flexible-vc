@@ -28,8 +28,6 @@ class VCTKDataset(Dataset):
         # get feat paths
         self.feat_paths = self._get_path(feat_dir, meta_path)
 
-    def __len__(self):
-        return len(self.feat_paths)
 
     def _get_dict(self, dict_path):
         # sp: 0, sil: 1, let sp serve as <PAD> and <EOS>
@@ -89,11 +87,18 @@ class VCTKDataset(Dataset):
         # returning [[f_ids], [feat_1], [feat_2] ...]
         return f_ids + padded_batch
 
+    def __len__(self):
+        raise NotImplementedError()
+
     def __getitem__(self):
+        raise NotImplementedError()
+
+    def _load_feat(self):
         raise NotImplementedError()
 
     def _collate_fn(self):
         raise NotImplementedError()
+
 
 class PPR_VCTKDataset(VCTKDataset):
     def __init__(self,
@@ -123,6 +128,9 @@ class PPR_VCTKDataset(VCTKDataset):
                 self.original_len[feat['f_id']] = len(mel)
         print("At {} mode, {}'s data loaded".format(self.mode, self.meta_path.split('/')[-1]))
         return
+
+    def __len__(self):
+        return len(self.f_ids)
 
     def __getitem__(self, index):
         return self.f_ids[index], self.mels[index], self.labels[index]
@@ -157,28 +165,53 @@ class PPTS_VCTKDataset(VCTKDataset):
                  meta_path,
                  dict_path,
                  phn_hat_dir,
+                 spk_id,
                  mode='train'):
         super(PPTS_VCTKDataset, self).__init__(feat_dir, meta_path, dict_path)
-        self.phn_hat_paths = [p.replace(feat_dir, phn_hat_dir) for p in self.feat_paths]
+        self.spk_id = spk_id
+        self.mode = mode
+        self.phn_hat_paths = [
+            p.replace(feat_dir, phn_hat_dir).replace('.pkl', '_phn_hat.pkl') \
+                for p in self.feat_paths
+        ]
+        self._load_feat()
+
+    def _load_feat(self):
+        self.f_ids = []
+        self.phn_hats = []
+        self.mags = []
+        self.labels = []
+        self.original_len = {}
+        for fpath, ppath in zip(self.feat_paths, self.phn_hat_paths):
+            if fpath.split('/')[-1].split('_')[0] == self.spk_id:
+                with open(fpath, 'rb') as f, open(ppath, 'rb') as g:
+                    phn_hat = pickle.load(g)
+                    feat = pickle.load(f)
+                    mag = feat['mag']
+
+                    self.f_ids.append(feat['f_id'])
+                    self.phn_hats.append(np.array(phn_hat))
+                    self.mags.append(np.array(mag))
+                    self.original_len[feat['f_id']] = len(mag)
+                    assert len(phn_hat) == len(mag)
+        print("At {} mode, {}'s data loaded".format(self.mode, self.meta_path.split('/')[-1]))
+        return
+
+    def __len__(self):
+        return len(self.f_ids)
 
     def __getitem__(self, index):
-        with open(self.phn_hat_paths[index], 'rb') as f, \
-             open(self.feat_paths[index], 'rb') as g:
-            phn_hat = pickle.load(f)
-            feat = pickle.load(g)
-            mag = feat['mag']
-            assert len(phn_hat) == len(mag)
-        return phn_hat, mag
+        return self.f_ids[index], self.phn_hats[index], self.mags[index]
 
     def _collate_fn(self, batch):
-        # batch: list of (feat_batch, label_batch) from __getitem__
+        # batch: list of (f_id, phn_hat_batch, mag_batch) from __getitem__
 
         # Dynamic padding.
-        phn_batch, mag_batch = self._my_pad(batch)
-        phn_batch = torch.as_tensor(phn_batch)
-        mag_batch = torch.as_tensor(mag_batch)
+        f_ids, phn_batch, mag_batch = self._my_pad(batch)
+        phn_batch = torch.as_tensor(phn_batch, dtype=torch.float)
+        mag_batch = torch.as_tensor(mag_batch, dtype=torch.float)
 
-        return phn_batch, mag_batch
+        return f_ids, phn_batch, mag_batch
 
 def UPPT_VCTKDataset(Dataset):
     def __init__(self):

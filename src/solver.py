@@ -72,6 +72,7 @@ class PPR_Solver(Solver):
             self.train_loader, _ = self.get_dataset(self.train_meta_path)
             self.eval_loader, _ = self.get_dataset(self.eval_meta_path)
             self.optimizer = self.build_optimizer()
+            self.log_dir = config['path']['ppr']['log_dir']
             self.writer = SummaryWriter(self.log_dir)
             self.one_hot_encoder = OnehotEncoder(self.phn_dim)
         elif mode == 'test':
@@ -80,7 +81,6 @@ class PPR_Solver(Solver):
             self.train_loader, self.train_ori_len = self.get_dataset(self.train_meta_path)
             self.eval_loader, self.eval_ori_len = self.get_dataset(self.eval_meta_path)
 
-        self.log_dir = config['path']['ppr']['log_dir']
         self.save_dir = config['path']['ppr']['save_dir']
         self.ppr_output_dir = config['path']['ppr']['output_dir']
 
@@ -194,7 +194,7 @@ class PPR_Solver(Solver):
             if self.global_step % self.log_interval == 0:
                 print(
                     '[GS=%3d, epoch=%d, idx=%3d] loss: %.6f' % \
-                    (self.global_step+1, self.epoch+1, idx+1, loss.item())
+                    (self.global_step+1, self.epoch, idx+1, loss.item())
                 )
             if self.global_step % self.summ_interval == 0:
                 self.writer.add_scalar('train/training_loss', loss.item(), self.global_step)
@@ -209,7 +209,7 @@ class PPR_Solver(Solver):
                 self.save_ckpt()
 
         epoch_loss /= (idx+1)
-        print('[epoch %d] training_loss: %.6f' % (self.epoch + 1, epoch_loss))
+        print('[epoch %d] training_loss: %.6f' % (self.epoch, epoch_loss))
         self.writer.add_scalar('train/epoch_training_loss', epoch_loss, self.epoch)
         self.writer.add_image(
             'train/label_gt', torch.t(self.one_hot_encoder(label_batch[0])).detach().cpu().numpy(),
@@ -241,8 +241,8 @@ class PPR_Solver(Solver):
 
         eval_loss /= (idx+1)
         avg_acc /= (idx+1)
-        print('[eval %d] eval_loss: %.6f' % (self.epoch+1, eval_loss))
-        print('[eval %d] eval_acc: %.6f' % (self.epoch+1, avg_acc))
+        print('[eval %d] eval_loss: %.6f' % (self.epoch, eval_loss))
+        print('[eval %d] eval_acc: %.6f' % (self.epoch, avg_acc))
 
         self.writer.add_scalar('eval/eval_loss', eval_loss, self.epoch)
         self.writer.add_scalar('eval/accuracy', avg_acc, self.epoch)
@@ -283,6 +283,7 @@ class PPTS_Solver(Solver):
     def __init__(self, config, args, mode='train'):
         super(PPTS_Solver, self).__init__(config, args)
 
+        self.phn_hat_dir = config['path']['ppr']['output_dir']
         self.phn_dim = config['text']['phn_dim']
         self.n_fft = config['audio']['n_fft']
 
@@ -292,8 +293,9 @@ class PPTS_Solver(Solver):
         self.weight_decay = config['model']['ppts']['weight_decay']
 
         self.spk_id = args.spk_id
-        if self.spk_id == '' or None:
+        if self.spk_id == ('' or None):
             print("[Error] A spk_id must be given to init a PPTS solver")
+            exit()
 
         self.mode = mode
         self.model, self.criterion = self.build_model()
@@ -301,13 +303,12 @@ class PPTS_Solver(Solver):
             self.optimizer = self.build_optimizer()
             self.train_loader = self.get_dataset(self.train_meta_path)
             self.eval_loader = self.get_dataset(self.eval_meta_path)
+            self.log_dir = os.path.join(config['path']['ppts']['log_dir'], self.spk_id)
             self.writer = SummaryWriter(self.log_dir)
         elif mode == 'test':
             self.test_loader = self.get_dataset(self.test_meta_path)
 
-        self.log_dir = os.path.join(config['path']['ppts']['log_dir'], self.spk_id)
         self.save_dir = os.path.join(config['path']['ppts']['save_dir'], self.spk_id)
-        self.phn_hat_dir = config['path']['ppr']['output_dir']
         self.ppts_output_dir = os.path.join(config['path']['ppts']['output_dir'], self.spk_id)
 
         # attempt to load or set gs and epoch to 0
@@ -333,7 +334,7 @@ class PPTS_Solver(Solver):
     def build_model(self):
         ppts = PPTS(
             input_dim=self.phn_dim, output_dim=(self.n_fft//2)+1,
-            dropout_rate=0.5, prenet_hidden_dims=[256, 128], K=8,
+            dropout_rate=0.5, prenet_hidden_dims=[256, 128], K=16,
             conv1d_bank_hidden_dim=128, conv1d_projections_hidden_dim=128,
             gru_dim=256
         )
@@ -400,6 +401,8 @@ class PPTS_Solver(Solver):
             epoch_loss += loss.item()
 
             # Logging
+            # Because of number of batch is too few, only log at epoch level
+            '''
             if self.global_step % self.log_interval == 0:
                 print(
                     '[GS=%3d, epoch=%d, idx=%3d] loss: %.6f' % \
@@ -407,6 +410,7 @@ class PPTS_Solver(Solver):
                 )
             if self.global_step % self.summ_interval == 0:
                 self.writer.add_scalar('train/training_loss', loss.item(), self.global_step)
+            '''
 
             # Backward
             loss.backward()
@@ -418,10 +422,14 @@ class PPTS_Solver(Solver):
                 self.save_ckpt()
 
         epoch_loss /= (idx+1)
-        print('[epoch %d] training_loss: %.6f' % (self.epoch + 1, epoch_loss))
+        print('[epoch %d] training_loss: %.6f' % (self.epoch, epoch_loss))
         self.writer.add_scalar('train/epoch_training_loss', epoch_loss, self.epoch)
         self.writer.add_image(
-            'train/mag_hat', torch.t(torch.exp(mag_hat[0])).detach().cpu().numpy(),
+            'train/mag_gt', torch.t(mag_batch[0]).detach().cpu().numpy(),
+            self.epoch, dataformats='HW'
+        )
+        self.writer.add_image(
+            'train/mag_hat', torch.t(mag_hat[0]).detach().cpu().numpy(),
             self.epoch, dataformats='HW'
         )
         self.epoch += 1
@@ -442,13 +450,16 @@ class PPTS_Solver(Solver):
                     break
 
         eval_loss /= (idx+1)
-        print('[eval %d] eval_loss: %.6f' % (self.epoch+1, eval_loss))
+        print('[eval %d] eval_loss: %.6f' % (self.epoch, eval_loss))
 
         self.writer.add_scalar('eval/eval_loss', eval_loss, self.epoch)
-        self.writer.add_image('eval/mag_hat',
-            torch.t(torch.exp(label_hat[0])).detach().cpu().numpy(),
+        self.writer.add_image(
+            'eval/mag_gt', torch.t(mag_batch[0]).detach().cpu().numpy(),
+            self.epoch, dataformats='HW'
+        )
+        self.writer.add_image(
+            'eval/mag_hat', torch.t(mag_hat[0]).detach().cpu().numpy(),
             self.epoch, dataformats='HW'
         )
 
         return
-

@@ -7,7 +7,7 @@ import torch
 from src.solver import PPR_Solver, PPTS_Solver
 
 def train(s, args, config):
-    while s.epoch < 1000:
+    while s.epoch < 100000:
         s.train()
         if s.epoch % 10 == 0:
             s.eval()
@@ -52,7 +52,7 @@ if __name__ == '__main__':
     model_group.add_argument('--ppr', action='store_true', default=False, dest='ppr')
     model_group.add_argument('--ppts', action='store_true',default=False, dest='ppts')
     model_group.add_argument('--uppt', action='store_true',default=False, dest='uppt')
-    parser.add_argument('--spk_id', type=str, required=False)
+    parser.add_argument('--spk_id', default=None, type=str, required=False)
     args = parser.parse_args()
     config = yaml.load(open(args.config))
 

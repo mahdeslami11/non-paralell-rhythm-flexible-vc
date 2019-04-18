@@ -38,7 +38,7 @@ class PPR(nn.Module):
 
 class PPTS(nn.Module):
     def __init__(self, input_dim, output_dim, dropout_rate=0.5,
-                 prenet_hidden_dims=[256, 128], K=8,
+                 prenet_hidden_dims=[256, 128], K=16,
                  conv1d_bank_hidden_dim=128, conv1d_projections_hidden_dim=128, gru_dim=256):
         super(PPTS, self).__init__()
         self.prenet = Prenet(input_dim, dropout_rate, prenet_hidden_dims)
@@ -46,13 +46,13 @@ class PPTS(nn.Module):
             prenet_hidden_dims[-1], K,
             conv1d_bank_hidden_dim, conv1d_projections_hidden_dim, gru_dim
         )
-        #self.gru = nn.GRU(2*gru_dim, gru_dim, 1, batch_first=True, bidirectional=True)
+        self.gru = nn.GRU(2*gru_dim, gru_dim, 1, batch_first=True, bidirectional=True)
         self.output_trans = nn.Linear(gru_dim*2, output_dim)
 
     def forward(self, input_x):
         h1 = self.prenet(input_x)
         h2 = self.cbhg(h1)
-        # h2 = self.gru(h2)
+        h2, _ = self.gru(h2)
         output = self.output_trans(h2)
         return output
 
