@@ -30,7 +30,7 @@ class Solver(object):
         self.log_interval = config['solver']['log_interval']
         self.summ_interval = config['solver']['summ_interval']
         self.ckpt_interval = config['solver']['ckpt_interval']
-        
+
         # must-implement functions for Solver
         def get_dataset(self):
             raise NotImplementedError()
@@ -67,17 +67,21 @@ class PPR_Solver(Solver):
         self.label_smoothing = config['model']['ppr']['label_smoothing']
 
         self.mode = mode
-        self.train_loader = self.get_dataset(self.train_meta_path)
-        self.eval_loader = self.get_dataset(self.eval_meta_path)
-        self.test_loader = self.get_dataset(self.test_meta_path)
         self.model = self.build_model()
         if mode == 'train':
+            self.train_loader, _ = self.get_dataset(self.train_meta_path)
+            self.eval_loader, _ = self.get_dataset(self.eval_meta_path)
             self.optimizer = self.build_optimizer()
+            self.writer = SummaryWriter(self.log_dir)
             self.one_hot_encoder = OnehotEncoder(self.phn_dim)
+        elif mode == 'test':
+            self.test_loader, self.test_ori_len = self.get_dataset(self.test_meta_path)
+            # also need to infer train and eval part for training UPPT and PPTS
+            self.train_loader, self.train_ori_len = self.get_dataset(self.train_meta_path)
+            self.eval_loader, self.eval_ori_len = self.get_dataset(self.eval_meta_path)
 
         self.log_dir = config['path']['ppr']['log_dir']
         self.save_dir = config['path']['ppr']['save_dir']
-        self.writer = SummaryWriter(self.log_dir)
         self.ppr_output_dir = config['path']['ppr']['output_dir']
 
         # attempt to load or set gs and epoch to 0
@@ -96,7 +100,7 @@ class PPR_Solver(Solver):
             num_workers=self.num_workers,
             collate_fn=dataset._collate_fn, pin_memory=True
         )
-        return dataloader
+        return dataloader, dataset.original_len
 
     def build_model(self):
         ppr = PPR(
@@ -174,7 +178,7 @@ class PPR_Solver(Solver):
     def train(self):
         epoch_loss = 0.0
         self.model.train()
-        for idx, (mel_batch, label_batch) in enumerate(self.train_loader):
+        for idx, (_, mel_batch, label_batch) in enumerate(self.train_loader):
             mel_batch, label_batch = mel_batch.to(self.device), label_batch.to(self.device)
 
             # Forward
@@ -224,7 +228,7 @@ class PPR_Solver(Solver):
         avg_acc = 0.0
         self.model.eval()
         with torch.no_grad():
-            for idx, (mel_batch, label_batch) in enumerate(self.eval_loader):
+            for idx, (_, mel_batch, label_batch) in enumerate(self.eval_loader):
                 mel_batch, label_batch = mel_batch.to(self.device), label_batch.to(self.device)
                 label_hat = self.model(mel_batch)
                 loss = F.nll_loss(torch.transpose(label_hat, 1, 2), label_batch)
@@ -253,12 +257,11 @@ class PPR_Solver(Solver):
 
         return
 
-    def save_label_hat(self, f_id_list, label_hat):
-        for idx in len(f_id_list):
-            out_name = "{}_phn_hat.pkl".format(f_id_list[idx])
-            out_path = os.path.join(self.ppr_output_dir, out_name)
-            with open(out_path, 'wb') as f:
-                pickle.dump(label_hat[idx], f)
+    def save_label_hat(self, f_id, l_hat):
+        out_name = "{}_phn_hat.pkl".format(f_id)
+        out_path = os.path.join(self.ppr_output_dir, out_name)
+        with open(out_path, 'wb') as f:
+            pickle.dump(l_hat, f)
         return
 
     def test(self):
@@ -266,10 +269,14 @@ class PPR_Solver(Solver):
             os.makedirs(self.ppr_output_dir)
         self.model.eval()
         with torch.no_grad():
-            for (f_id_list, mel_batch, label_batch) in test_loader:
-                mel_batch, label_batch = mel_batch.to(self.device), label_batch.to(self.device)
-                label_hat = self.model(mel_batch).detach().cpu().numpy()
-                self.save_label_hat(f_id_list, label_hat)
+            # also need to infer train and eval part for training UPPT and PPTS
+            for ori_len, loader in zip([self.test_ori_len, self.train_ori_len, self.eval_ori_len], \
+                    [self.test_loader, self.train_loader, self.eval_loader]):
+                for (f_id_list, mel_batch, label_batch) in loader:
+                    mel_batch, label_batch = mel_batch.to(self.device), label_batch.to(self.device)
+                    label_hat = torch.exp(self.model(mel_batch)).detach().cpu().numpy()
+                    for f_id, l_hat in zip(f_id_list, label_hat):
+                        self.save_label_hat(f_id, l_hat[:ori_len[f_id]])
         return
 
 class PPTS_Solver(Solver):
@@ -283,21 +290,25 @@ class PPTS_Solver(Solver):
         self.optimizer_type = config['model']['ppts']['type']
         self.betas = [float(x) for x in config['model']['ppts']['betas'].split(',')]
         self.weight_decay = config['model']['ppts']['weight_decay']
-        self.label_smoothing = config['model']['ppts']['label_smoothing']
+
+        self.spk_id = args.spk_id
+        if self.spk_id == '' or None:
+            print("[Error] A spk_id must be given to init a PPTS solver")
 
         self.mode = mode
-        self.train_loader = self.get_dataset(self.train_meta_path)
-        self.eval_loader = self.get_dataset(self.eval_meta_path)
-        self.test_loader = self.get_dataset(self.test_meta_path)
         self.model, self.criterion = self.build_model()
         if mode == 'train':
             self.optimizer = self.build_optimizer()
+            self.train_loader = self.get_dataset(self.train_meta_path)
+            self.eval_loader = self.get_dataset(self.eval_meta_path)
+            self.writer = SummaryWriter(self.log_dir)
+        elif mode == 'test':
+            self.test_loader = self.get_dataset(self.test_meta_path)
 
-        self.log_dir = config['path']['ppts']['log_dir']
-        self.save_dir = config['path']['ppts']['save_dir']
-        self.writer = SummaryWriter(self.log_dir)
+        self.log_dir = os.path.join(config['path']['ppts']['log_dir'], self.spk_id)
+        self.save_dir = os.path.join(config['path']['ppts']['save_dir'], self.spk_id)
         self.phn_hat_dir = config['path']['ppr']['output_dir']
-        self.ppts_output_dir = config['path']['ppts']['output_dir']
+        self.ppts_output_dir = os.path.join(config['path']['ppts']['output_dir'], self.spk_id)
 
         # attempt to load or set gs and epoch to 0
         self.load_ckpt()
@@ -308,6 +319,7 @@ class PPTS_Solver(Solver):
             meta_path=meta_path,
             dict_path=self.dict_path,
             phn_hat_dir=self.phn_hat_dir,
+            spk_id = self.spk_id,
             mode=self.mode
         )
         dataloader = DataLoader(
@@ -378,7 +390,7 @@ class PPTS_Solver(Solver):
     def train(self):
         epoch_loss = 0.0
         self.model.train()
-        for idx, (phn_hat_batch, mag_batch) in enumerate(self.train_loader):
+        for idx, (_, phn_hat_batch, mag_batch) in enumerate(self.train_loader):
             phn_hat_batch, mag_batch = phn_hat_batch.to(self.device), mag_batch.to(self.device)
 
             # Forward
@@ -420,7 +432,7 @@ class PPTS_Solver(Solver):
         eval_loss = 0.0
         self.model.eval()
         with torch.no_grad():
-            for idx, (phn_hat_batch, mag_batch) in enumerate(self.eval_loader):
+            for idx, (_, phn_hat_batch, mag_batch) in enumerate(self.eval_loader):
                 phn_hat_batch, mag_batch = phn_hat_batch.to(self.device), mag_batch.to(self.device)
                 mag_hat = self.model(phn_hat_batch)
                 loss = self.criterion(mag_hat, mag_batch)

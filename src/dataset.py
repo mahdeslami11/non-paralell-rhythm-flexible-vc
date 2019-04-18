@@ -68,10 +68,13 @@ class VCTKDataset(Dataset):
         return padded
 
     def _my_pad(self, batch):
+        # assumes batch[n][0] will always be f_id
+        f_ids = [[x[0] for x in batch]]
+
         component_num = len(batch[0])
         padded_batch = []
-        max_lens = [max([len(x[i]) for x in batch]) for i in range(component_num)]
-        for idx in range(component_num):
+        max_lens = [None] + [max([len(x[i]) for x in batch]) for i in range(1, component_num)]
+        for idx in range(1, component_num):
             not_pad = [x[idx] for x in batch]
             dims = len(batch[0][idx].shape)
             if dims == 1:
@@ -81,8 +84,10 @@ class VCTKDataset(Dataset):
             else:
                 raise NotImplementedError()
             padded_batch.append(padded)
-        assert len(batch) == len(padded_batch[0])
-        return padded_batch
+        assert component_num == len(padded_batch) + 1
+
+        # returning [[f_ids], [feat_1], [feat_2] ...]
+        return f_ids + padded_batch
 
     def __getitem__(self):
         raise NotImplementedError()
@@ -104,6 +109,7 @@ class PPR_VCTKDataset(VCTKDataset):
         self.f_ids = []
         self.mels = []
         self.labels = []
+        self.original_len = {}
         for path in self.feat_paths:
             with open(path, 'rb') as f:
                 feat = pickle.load(f)
@@ -114,15 +120,12 @@ class PPR_VCTKDataset(VCTKDataset):
                 self.f_ids.append(feat['f_id'])
                 self.mels.append(np.array(mel))
                 self.labels.append(np.array(label))
+                self.original_len[feat['f_id']] = len(mel)
+        print("At {} mode, {}'s data loaded".format(self.mode, self.meta_path.split('/')[-1]))
         return
 
     def __getitem__(self, index):
-        if self.mode == 'train':
-            return self.mels[index], self.labels[index]
-        elif self.mode == 'test':
-            return self.f_id[index], self.mels[index], self.labels[index]
-        else:
-            raise NotImplementedError()
+        return self.f_ids[index], self.mels[index], self.labels[index]
 
     '''
     def __getitem__(self, index):
@@ -139,21 +142,14 @@ class PPR_VCTKDataset(VCTKDataset):
             raise NotImplementedError()
     '''
     def _collate_fn(self, batch):
-        # batch: list of (mel, label) or (f_id, mel, label) from __getitem__
+        # batch: list of (f_id, mel, label) from __getitem__
 
-        batch = batch if self.mode == 'train' else batch[1:]
         # Dynamic padding.
-        mel_batch, label_batch = self._my_pad(batch)
+        f_ids, mel_batch, label_batch = self._my_pad(batch)
         mel_batch = torch.as_tensor(mel_batch, dtype=torch.float)
         label_batch = torch.as_tensor(label_batch, dtype=torch.long)
 
-        if self.mode == 'train':
-            return mel_batch, label_batch
-        elif self.mode == 'test':
-            f_ids = [x[0] for x in batch]
-            return f_ids, mel_batch, label_batch
-        else:
-            raise NotImplementedError()
+        return f_ids, mel_batch, label_batch
 
 class PPTS_VCTKDataset(VCTKDataset):
     def __init__(self,

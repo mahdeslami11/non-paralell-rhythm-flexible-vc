@@ -22,7 +22,7 @@ model:
         type: "Adam"
         betas: "0.9, 0.999"
         weight_decay: 0.0
-        label_smoothing: True
+        label_smoothing: False
         grad_clip: 1.0
     ppts:
         lr: 0.001
@@ -59,8 +59,8 @@ path:
     feat_dir: "/home_local/hoa/Desktop/non-parallel-rhythm-flexible-VC/data/feat"
     phn_dict_path: "/home_local/hoa/Desktop/non-parallel-rhythm-flexible-VC/data/phn_map.txt"
     ppr:
-        log_dir: "/home_local/hoa/Desktop/non-parallel-rhythm-flexible-VC/ppr_logs_ls"
-        save_dir: "/home_local/hoa/Desktop/non-parallel-rhythm-flexible-VC/ppr_saved_models_ls"
+        log_dir: "/home_local/hoa/Desktop/non-parallel-rhythm-flexible-VC/ppr_logs"
+        save_dir: "/home_local/hoa/Desktop/non-parallel-rhythm-flexible-VC/ppr_saved_models"
         output_dir: "/home_local/hoa/Desktop/non-parallel-rhythm-flexible-VC/data/phn_hats"
     ppts:
         log_dir: "/home_local/hoa/Desktop/non-parallel-rhythm-flexible-VC/ppts_logs"
