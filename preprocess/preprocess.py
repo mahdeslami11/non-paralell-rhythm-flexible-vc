@@ -90,17 +90,14 @@ def main():
             }
             with open(featpath, 'wb') as f:
                 pickle.dump(feat, f)
-            
+
             all_meta.append((f_id, text))
 
     speaker2uttrs = defaultdict(list)
     for meta in sorted(all_meta):
         spk_id = meta[0].split('_')[0]
         speaker2uttrs[spk_id].append(meta)
-    
-    for x in speaker2uttrs:
-        print(x, len(speaker2uttrs[x]))
-    
+
     # for metas
     with open(train_meta_path, 'w') as tr, open(eval_meta_path, 'w') as ev, \
             open(test_meta_path, 'w') as te:

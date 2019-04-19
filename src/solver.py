@@ -427,6 +427,10 @@ class PPTS_Solver(Solver):
         epoch_loss /= (idx+1)
         print('[epoch %d] training_loss: %.6f' % (self.epoch, epoch_loss))
         self.writer.add_scalar('train/epoch_training_loss', epoch_loss, self.epoch)
+        self.writer.add_image('train/phn_hat',
+            torch.t(phn_hat_batch[0]).detach().cpu().numpy(),
+            self.epoch, dataformats='HW'
+        )
         self.writer.add_image(
             'train/mag_gt', torch.t(mag_batch[0]).detach().cpu().numpy()[::-1,:],
             self.epoch, dataformats='HW'

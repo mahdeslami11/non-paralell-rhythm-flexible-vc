@@ -65,27 +65,17 @@ class VCTKDataset(Dataset):
         ]
         return padded
 
-    def _my_pad(self, batch):
-        # assumes batch[n][0] will always be f_id
-        f_ids = [[x[0] for x in batch]]
-
-        component_num = len(batch[0])
-        padded_batch = []
-        max_lens = [None] + [max([len(x[i]) for x in batch]) for i in range(1, component_num)]
-        for idx in range(1, component_num):
-            not_pad = [x[idx] for x in batch]
-            dims = len(batch[0][idx].shape)
-            if dims == 1:
-                padded = self._pad_1d(not_pad, max_lens[idx])
-            elif dims == 2:
-                padded = self._pad_2d(not_pad, max_lens[idx])
-            else:
-                raise NotImplementedError()
-            padded_batch.append(padded)
-        assert component_num == len(padded_batch) + 1
-
-        # returning [[f_ids], [feat_1], [feat_2] ...]
-        return f_ids + padded_batch
+    def _pad_one_hot(self, _input, max_len, one_hot_dim, pad_idx):
+        PAD_one_hot = np.zeros([1, one_hot_dim])
+        PAD_one_hot[0][pad_idx] = 1
+        padded = [
+            np.concatenate(
+                (x, PAD_one_hot.repeat(max_len - len(x), axis=0)),
+                axis=0
+            )
+            for x in _input
+        ]
+        return padded
 
     def __len__(self):
         raise NotImplementedError()
@@ -149,6 +139,20 @@ class PPR_VCTKDataset(VCTKDataset):
         else:
             raise NotImplementedError()
     '''
+    def _my_pad(self, batch):
+        # f_ids
+        f_ids = [[x[0] for x in batch]]
+
+        # mels
+        max_len_1 = max([len(x[1]) for x in batch])
+        mel_batch = self._pad_2d([x[1] for x in batch], max_len_1)
+
+        # labels
+        max_len_2 = max([len(x[2]) for x in batch])
+        label_batch = self._pad_1d([x[2] for x in batch], max_len_2)
+
+        return f_ids, mel_batch, label_batch
+
     def _collate_fn(self, batch):
         # batch: list of (f_id, mel, label) from __getitem__
 
@@ -202,6 +206,21 @@ class PPTS_VCTKDataset(VCTKDataset):
 
     def __getitem__(self, index):
         return self.f_ids[index], self.phn_hats[index], self.mags[index]
+
+    def _my_pad(self, batch):
+        # f_ids
+        f_ids = [[x[0] for x in batch]]
+
+        # phn_distributions
+        max_len_1 = max([len(x[1]) for x in batch])
+        one_hot_dim = batch[0][1].shape[-1]
+        phn_batch = self._pad_one_hot([x[1] for x in batch], max_len_1, one_hot_dim, 0)
+
+        # mags
+        max_len_2 = max([len(x[2]) for x in batch])
+        mag_batch = self._pad_2d([x[2] for x in batch], max_len_2)
+
+        return f_ids, phn_batch, mag_batch
 
     def _collate_fn(self, batch):
         # batch: list of (f_id, phn_hat_batch, mag_batch) from __getitem__
