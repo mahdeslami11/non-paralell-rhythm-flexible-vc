@@ -12,5 +12,7 @@ PyTorch implementation of:
 # Network
 
 # Notes
-1. Perhaps not to use dataloader at inference time?
-2. phoneme 'spn' means Unknown in MFA, so currently map it with 'sp' to id 0 as well.
+1. Perhaps not to use dataloader at inference time? -> add a function to load
+   from specified path
+2. Phoneme 'spn' means Unknown in MFA, so currently map it with 'sp' to id 0 as well.
+3. Add Logging method to solver, removing add summ redundancy in both train and eval

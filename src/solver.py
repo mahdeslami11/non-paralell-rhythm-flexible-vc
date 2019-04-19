@@ -9,6 +9,7 @@ from tensorboardX import SummaryWriter
 
 from .models import PPR, PPTS, Generator, Discriminator, OnehotEncoder
 from .dataset import PPR_VCTKDataset, PPTS_VCTKDataset, UPPT_VCTKDataset
+from .utils import AudioProcessor
 
 class Solver(object):
     def __init__(self, config, args):
@@ -18,6 +19,8 @@ class Solver(object):
         self.device = torch.device('cuda') if self.use_gpu else torch.device('cpu')
         self.config = config
         self.args = args
+
+        self.ap = AudioProcessor(**config['audio'])
 
         self.feat_dir = config['path']['feat_dir']
         self.train_meta_path = config['path']['train_meta_path']
@@ -425,12 +428,20 @@ class PPTS_Solver(Solver):
         print('[epoch %d] training_loss: %.6f' % (self.epoch, epoch_loss))
         self.writer.add_scalar('train/epoch_training_loss', epoch_loss, self.epoch)
         self.writer.add_image(
-            'train/mag_gt', torch.t(mag_batch[0]).detach().cpu().numpy(),
+            'train/mag_gt', torch.t(mag_batch[0]).detach().cpu().numpy()[::-1,:],
             self.epoch, dataformats='HW'
         )
         self.writer.add_image(
-            'train/mag_hat', torch.t(mag_hat[0]).detach().cpu().numpy(),
+            'train/mag_hat', torch.t(mag_hat[0]).detach().cpu().numpy()[::-1,:],
             self.epoch, dataformats='HW'
+        )
+        self.writer.add_audio(
+            'train/audio_gt', self.ap.inv_spectrogram(mag_batch[0].detach().cpu().numpy()),
+            self.epoch, sample_rate=self.ap.sr
+        )
+        self.writer.add_audio(
+            'train/audio_hat', self.ap.inv_spectrogram(mag_hat[0].detach().cpu().numpy()),
+            self.epoch, sample_rate=self.ap.sr
         )
         self.epoch += 1
 
@@ -454,12 +465,20 @@ class PPTS_Solver(Solver):
 
         self.writer.add_scalar('eval/eval_loss', eval_loss, self.epoch)
         self.writer.add_image(
-            'eval/mag_gt', torch.t(mag_batch[0]).detach().cpu().numpy(),
+            'eval/mag_gt', torch.t(mag_batch[0]).detach().cpu().numpy()[::-1,:],
             self.epoch, dataformats='HW'
         )
         self.writer.add_image(
-            'eval/mag_hat', torch.t(mag_hat[0]).detach().cpu().numpy(),
+            'eval/mag_hat', torch.t(mag_hat[0]).detach().cpu().numpy()[::-1,:],
             self.epoch, dataformats='HW'
+        )
+        self.writer.add_audio(
+            'eval/audio_gt', self.ap.inv_spectrogram(mag_batch[0].detach().cpu().numpy()),
+            self.epoch, sample_rate=self.ap.sr
+        )
+        self.writer.add_audio(
+            'eval/audio_hat', self.ap.inv_spectrogram(mag_hat[0].detach().cpu().numpy()),
+            self.epoch, sample_rate=self.ap.sr
         )
 
         return
