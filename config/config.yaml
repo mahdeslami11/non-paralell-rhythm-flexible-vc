@@ -12,7 +12,7 @@ audio:
     min_level_db: -100
     ref_level_db: 20
     power: 1
-    griffin_lim_iters: 200
+    griffin_lim_iters: 30
     order: 25
     alpha: 0.42
 
@@ -23,7 +23,6 @@ model:
         betas: "0.9, 0.999"
         weight_decay: 0.0
         label_smoothing: False
-        grad_clip: 1.0
     ppts:
         lr: 0.001
         type: "Adam"
@@ -36,8 +35,8 @@ model:
 
 solver:
     use_gpu: True
-    num_workers: 0
-    batch_size: 32
+    num_workers: 4
+    batch_size: 25
     log_interval: 20
     summ_interval: 200
     ckpt_interval: 2000
@@ -62,6 +61,10 @@ path:
         save_dir: "/home_local/hoa/Desktop/non-parallel-rhythm-flexible-VC/ppr_saved_models"
         output_dir: "/home_local/hoa/Desktop/non-parallel-rhythm-flexible-VC/data/phn_hats"
     ppts:
-        log_dir: "/home_local/hoa/Desktop/non-parallel-rhythm-flexible-VC/ppts_logs"
-        save_dir: "/home_local/hoa/Desktop/non-parallel-rhythm-flexible-VC/ppts_saved_models"
+        log_dir: "/home_local/hoa/Desktop/non-parallel-rhythm-flexible-VC/ppts_logs_stack_loss_trick"
+        save_dir: "/home_local/hoa/Desktop/non-parallel-rhythm-flexible-VC/ppts_saved_models_stack_loss_trick"
         output_dir: "/home_local/hoa/Desktop/non-parallel-rhythm-flexible-VC/data/ppts_results"
+    uppt:
+        log_dir: "/home_local/hoa/Desktop/non-parallel-rhythm-flexible-VC/uppt_logs"
+        save_dir: "/home_local/hoa/Desktop/non-parallel-rhythm-flexible-VC/uppt_saved_models"
+        output_dir: "/home_local/hoa/Desktop/non-parallel-rhythm-flexible-VC/data/converted_phn_hats"

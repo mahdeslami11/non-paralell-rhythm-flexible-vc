@@ -53,6 +53,8 @@ if __name__ == '__main__':
     model_group.add_argument('--ppts', action='store_true',default=False, dest='ppts')
     model_group.add_argument('--uppt', action='store_true',default=False, dest='uppt')
     parser.add_argument('--spk_id', default=None, type=str, required=False)
+    parser.add_argument('--A_id', default=None, type=str, required=False)
+    parser.add_argument('--B_id', default=None, type=str, required=False)
     args = parser.parse_args()
     config = yaml.load(open(args.config))
 

@@ -1,4 +1,5 @@
 import os
+import itertools
 import pickle
 import numpy as np
 import torch
@@ -338,7 +339,7 @@ class PPTS_Solver(Solver):
         ppts = PPTS(
             input_dim=self.phn_dim, output_dim=(self.n_fft//2)+1,
             dropout_rate=0.5, prenet_hidden_dims=[256, 128], K=16,
-            conv1d_bank_hidden_dim=128, conv1d_projections_hidden_dim=128,
+            conv1d_bank_hidden_dim=128, conv1d_projections_hidden_dim=256,
             gru_dim=256
         )
         ppts = ppts.to(self.device)
@@ -400,7 +401,9 @@ class PPTS_Solver(Solver):
             # Forward
             self.optimizer.zero_grad()
             mag_hat = self.model(phn_hat_batch)
-            loss = self.criterion(mag_hat, mag_batch)
+            #loss = self.criterion(mag_hat, mag_batch)
+            loss = 0.5 * self.criterion(mag_hat, mag_batch) + \
+                   0.5 * self.criterion(mag_hat[:,:,:200], mag_batch[:,:,:200])
             epoch_loss += loss.item()
 
             # Logging
@@ -485,4 +488,317 @@ class PPTS_Solver(Solver):
             self.epoch, sample_rate=self.ap.sr
         )
 
+        return
+
+class UPPT_Solver(Solver):
+    def __init__(self, config, args, mode='train'):
+        super(UPPT_Solver, self).__init__(config, args)
+
+        self.phn_hat_dir = config['path']['ppr']['output_dir']
+        self.phn_dim = config['text']['phn_dim']
+
+        self.lr = config['model']['uppt']['lr']
+        self.optimizer_type = config['model']['uppt']['type']
+        self.betas = [float(x) for x in config['model']['uppt']['betas'].split(',')]
+        self.weight_decay = config['model']['uppt']['weight_decay']
+
+        self.A_id = args.A_id
+        self.B_id = args.B_id
+        if self.A_id == ('' or None) or self.B_id == ('' or None):
+            print("[Error] A speaker ID pair must be given to init a UPPT solver")
+            exit()
+        self.save_prefix = "from_{}_to_{}".format(self.A_id, self.B_id)
+
+        self.mode = mode
+        self.gen_A_to_B, self.gen_B_to_A = self.build_gen()
+        if mode == 'train':
+            self.dis_A, self.dis_B = self.build_dis()
+            self.gen_optimizer, self.dis_optimizer = self.build_optimizer()
+            self.train_loader = self.get_dataset(self.train_meta_path)
+            self.eval_loader = self.get_dataset(self.eval_meta_path)
+            self.log_dir = os.path.join(config['path']['uppt']['log_dir'], self.save_prefix)
+            self.writer = SummaryWriter(self.log_dir)
+        elif mode == 'test':
+            self.test_loader = self.get_dataset(self.test_meta_path)
+
+        self.save_dir = os.path.join(config['path']['uppt']['save_dir'], self.save_prefix)
+        self.uppt_output_dir = os.path.join(config['path']['uppt']['output_dir'], self.save_prefix)
+
+        # attempt to load or set gs and epoch to 0
+        self.load_ckpt()
+
+    def get_dataset(self, meta_path):
+        #################################
+        #################################
+        #################################
+        #################################
+        #################################
+        #################################
+        dataset = UPPT_VCTKDataset(
+            meta_path=meta_path,
+            dict_path=self.dict_path,
+            phn_hat_dir=self.phn_hat_dir,
+            A_id = self.A_id,
+            B_id = self.B_id,
+            mode=self.mode
+        )
+        dataloader = DataLoader(
+            dataset, batch_size=self.batch_size,
+            shuffle=True if self.mode == 'train' else False,
+            num_workers=self.num_workers,
+            collate_fn=dataset._collate_fn, pin_memory=True
+        )
+        return dataloader
+
+    def build_gen(self):
+        gen_A_to_B = Generator(
+            input_dim=self.phn_dim, dropout_rate=0.5,
+            prenet_hidden_dims=[256,128], K=16,
+            conv1d_bank_hidden_dim=128, conv1d_projections_hidden_dim=128, gru_dim=128
+        ).to(self.device)
+
+        gen_B_to_A = Generator(
+            input_dim=self.phn_dim, dropout_rate=0.5,
+            prenet_hidden_dims=[256,128], K=16,
+            conv1d_bank_hidden_dim=128, conv1d_projections_hidden_dim=128, gru_dim=128
+        ).to(self.device)
+
+        return gen_A_to_B, gen_B_to_A
+
+    def build_dis(self):
+        dis_A = Discriminator(input_dim=self.phn_dim, input_len=self.dis_input_len).to(self.device)
+        dis_B = Discriminator(input_dim=self.phn_dim, input_len=self.dis_input_len).to(self.device)
+
+        return dis_A, dis_B
+
+    def build_optimizer(self):
+        optimizer = getattr(torch.optim, self.optimizer_type)
+        gen_optimizer = optimizer(
+            itertools.chain(self.gen_A_to_B.parameters(), self.gen_B_to_A.parameters()),
+            lr=self.lr, betas=self.betas, weight_decay=self.weight_decay
+        )
+        dis_optimizer = optimizer(
+            itertools.chain(self.dis_A.parameters(), self.dis_B.parameters()),
+            lr=self.lr, betas=self.betas, weight_decay=self.weight_decay
+        )
+
+        return gen_optimizer, dis_optimizer
+
+    def save_ckpt(self):
+        if not os.path.exists(self.save_dir):
+            os.makedirs(self.save_dir)
+        checkpoint_path = os.path.join(
+            self.save_dir, "model.ckpt-{}.pt".format(self.global_step)
+        )
+        torch.save({
+            "gen": self.gen.state_dict(),
+            "dis": self.dis.state_dict(),
+            "gen_optimizer": self.gen_optimizer.state_dict(),
+            "dis_optimizer": self.dis_optimizer.state_dict(),
+            "global_step": self.global_step,
+            "epoch": self.epoch
+        }, checkpoint_path)
+        print("Checkpoint model.ckpt-{}.pt saved.".format(self.global_step))
+        with open(os.path.join(self.save_dir, "checkpoint"), "w") as f:
+            f.write("model.ckpt-{}".format(self.global_step))
+        return
+
+    def load_ckpt(self):
+        checkpoint_list = os.path.join(self.save_dir, 'checkpoint')
+        if os.path.exists(checkpoint_list):
+            checkpoint_filename = open(checkpoint_list).readline().strip()
+            checkpoint_path = os.path.join(self.save_dir, "{}.pt".format(checkpoint_filename))
+            if self.use_gpu:
+                checkpoint = torch.load(checkpoint_path)
+            else:
+                checkpoint = torch.load(checkpoint_path, map_location=torch.device('cpu'))
+            self.gen.load_state_dict(checkpoint['gen'])
+            if self.mode == 'train':
+                self.dis.load_state_dict(checkpoint['dis'])
+                self.gen_optimizer.load_state_dict(checkpoint['gen_optimizer'])
+                self.dis_optimizer.load_state_dict(checkpoint['dis_optimizer'])
+            self.global_step = checkpoint['global_step']
+            self.epoch = checkpoint['epoch']
+            print("Checkpoint model.ckpt-{}.pt loaded.".format(self.global_step))
+        else:
+            self.global_step = 0
+            self.epoch = 0
+            print("Start training with new parameters.")
+        return
+
+    def _xent_loss(output, target):
+        '''
+        performing pure cross entropy calculation:
+        xent(output, target) = -p(target) * log(q(output))
+        '''
+        return (-1*target * output.log()).mean()
+
+    def train_G_step(self):
+        ##### Generators #####
+        self.gen_optimizer.zero_grad()
+
+        # GAN Loss
+        self.A_to_B = self.gen_A_to_B(self.A_batch)
+        self.v_B_fake = self.dis_B(self.A_to_B)
+        self.loss_GAN_A_to_B = -1*(self.v_B_fake).mean()
+
+        self.B_to_A = self.gen_B_to_A(self.B_batch)
+        self.v_A_fake = self.dis_A(self.B_to_A)
+        self.loss_GAN_B_to_A = -1*(self.v_A_fake).mean()
+
+        # Cycle-consistency Loss
+        self.A_to_B_to_A = self.gen_B_to_A(self.A_to_B)
+        self.B_to_A_to_B = self.gen_A_to_B(self.B_to_A)
+        self.loss_cycle_ABA = self._xent_loss(self.A_to_B_to_A, self.A_batch)
+        self.loss_cycle_BAB = self._xent_loss(self.B_to_A_to_B, self.B_batch)
+
+        # Identity Loss
+        self.A_to_A = self.gen_B_to_A(self.A_batch)
+        self.B_to_B = self.gen_A_to_B(self.B_batch)
+        self.loss_identity_A = self._xent_loss(self.A_to_A, self.A_batch)
+        self.loss_identity_B = self._xent_loss(self.B_to_B, self.B_batch)
+
+        # Total Loss
+        self.loss_G = self.loss_GAN_A_to_B + self.loss_GAN_B_to_A + \
+                 self.loss_cycle_ABA*10 + self.loss_cycle_BAB*10 + \
+                 self.loss_identity_A*5 + self.loss_identity_B*5
+        self.loss_G.backward()
+        self.gen_optimizer.step()
+
+        return
+
+    def train_D_step(self):
+        ##### Discriminators #####
+        self.dis_optimizer.zero_grad()
+
+        # GAN Loss (W distance)
+        self.v_A_real = self.dis_A(self.A_batch)
+        self.v_B_real = self.dis_B(self.B_batch)
+        self.W_A = (self.v_A_real - self.v_A_fake).mean()
+        self.W_B = (self.v_B_real - self.v_B_fake).mean()
+
+        # Gradient Penalty
+        alpha = torch.rand(self.batch_size, 1, 1).to(self.device)
+        self.A_inter = alpha * self.B_to_A + (1.0-alpha) * self.A_batch
+        self.v_A_inter = self.dis_A(self.A_inter)
+        gradient_A = torch.autograd.grad(
+            self.v_A_inter, self.A_inter,
+            grad_outputs=torch.ones(self.v_A_inter.size()).to(self.device),
+            create_graph=True, retain_graph=True, only_inputs=True
+        )
+        self.GP_A = ((gradient_A.norm(2) -1) ** 2).mean()
+
+        alpha = torch.rand(self.batch_size, 1, 1).to(self.device)
+        self.B_inter = alpha * self.A_to_B + (1.0-alpha) * self.B_batch
+        self.v_B_inter = self.dis_B(self.B_inter)
+        gradient_B = torch.autograd.grad(
+            self.v_B_inter, self.B_inter,
+            grad_outputs=torch.ones(self.v_B_inter.size()).to(self.device),
+            create_graph=True, retain_graph=True, only_inputs=True
+        )
+        self.GP_B = ((gradient_B.norm(2) -1) ** 2).mean()
+
+        # Total Loss
+        self.loss_D = -1*(self.W_A + self.W_B) + 10*(self.GP_A + self.GP_B)
+        self.loss_D.backward()
+        grad_norm = torch.nn.utils.clip_grad_norm(
+            itertools.chain(self.dis_A.parameters(), self.dis_B.parameters()), 5.
+        )
+        self.dis_optimizer.step()
+
+        return
+
+    def train(self):
+        self.gen_A_to_B.train()
+        self.gen_B_to_A.train()
+        self.dis_A.train()
+        self.dis_B.train()
+
+        for idx, (_, A_batch, B_batch) in enumerate(self.train_loader):
+            self.A_batch, self.B_batch = A_batch.to(self.device), B_batch.to(self.device)
+
+            # Train Generator
+            self.train_G_step()
+            for _ in range(2):
+                # Train Discriminator
+                self.train_D_step()
+
+            '''
+            # Logging
+            if self.global_step % self.log_interval == 0:
+                print(
+                    '[GS=%3d, epoch=%d, idx=%3d] loss: %.6f' % \
+                    (self.global_step+1, self.epoch+1, idx+1, loss.item())
+                )
+            if self.global_step % self.summ_interval == 0:
+                self.writer.add_scalar('train/training_loss', loss.item(), self.global_step)
+            '''
+
+            # Saving or not
+            self.global_step += 1
+            if self.global_step % self.ckpt_interval == 0:
+                self.save_ckpt()
+        '''
+        epoch_loss /= (idx+1)
+        print('[epoch %d] training_loss: %.6f' % (self.epoch, epoch_loss))
+        self.writer.add_scalar('train/epoch_training_loss', epoch_loss, self.epoch)
+        self.writer.add_image('train/phn_hat',
+            torch.t(phn_hat_batch[0]).detach().cpu().numpy(),
+            self.epoch, dataformats='HW'
+        )
+        self.writer.add_image(
+            'train/mag_gt', torch.t(mag_batch[0]).detach().cpu().numpy()[::-1,:],
+            self.epoch, dataformats='HW'
+        )
+        self.writer.add_image(
+            'train/mag_hat', torch.t(mag_hat[0]).detach().cpu().numpy()[::-1,:],
+            self.epoch, dataformats='HW'
+        )
+        self.writer.add_audio(
+            'train/audio_gt', self.ap.inv_spectrogram(mag_batch[0].detach().cpu().numpy()),
+            self.epoch, sample_rate=self.ap.sr
+        )
+        self.writer.add_audio(
+            'train/audio_hat', self.ap.inv_spectrogram(mag_hat[0].detach().cpu().numpy()),
+            self.epoch, sample_rate=self.ap.sr
+        )
+        self.epoch += 1
+        '''
+        return
+
+    def eval(self):
+        '''
+        eval_loss = 0.0
+        self.model.eval()
+        with torch.no_grad():
+            for idx, (_, phn_hat_batch, mag_batch) in enumerate(self.eval_loader):
+                phn_hat_batch, mag_batch = phn_hat_batch.to(self.device), mag_batch.to(self.device)
+                mag_hat = self.model(phn_hat_batch)
+                loss = self.criterion(mag_hat, mag_batch)
+                eval_loss += loss.item()
+
+                if idx % 100 == 0:
+                    break
+
+        eval_loss /= (idx+1)
+        print('[eval %d] eval_loss: %.6f' % (self.epoch, eval_loss))
+
+        self.writer.add_scalar('eval/eval_loss', eval_loss, self.epoch)
+        self.writer.add_image(
+            'eval/mag_gt', torch.t(mag_batch[0]).detach().cpu().numpy()[::-1,:],
+            self.epoch, dataformats='HW'
+        )
+        self.writer.add_image(
+            'eval/mag_hat', torch.t(mag_hat[0]).detach().cpu().numpy()[::-1,:],
+            self.epoch, dataformats='HW'
+        )
+        self.writer.add_audio(
+            'eval/audio_gt', self.ap.inv_spectrogram(mag_batch[0].detach().cpu().numpy()),
+            self.epoch, sample_rate=self.ap.sr
+        )
+        self.writer.add_audio(
+            'eval/audio_hat', self.ap.inv_spectrogram(mag_hat[0].detach().cpu().numpy()),
+            self.epoch, sample_rate=self.ap.sr
+        )
+        '''
         return
