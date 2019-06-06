@@ -3,6 +3,7 @@ import sys
 sys.path.insert(0,'..')
 import numpy as np
 import pickle
+from collections import defaultdict
 
 import torch
 from torch.utils.data import Dataset
@@ -45,13 +46,14 @@ class VCTKDataset(Dataset):
         with open(meta_path) as f:
             for line in f:
                 f_id = line.strip().split('|')[0]
-                # only SLT speakers are used
+                # only 20 speakers are used
                 if f_id.split('_')[0][1:] in need:
                     feat_path = os.path.join(feat_dir, '{}.pkl'.format(f_id))
                     feat_paths.append(feat_path)
         return feat_paths
 
     def _pad_1d(self, _input, max_len):
+        ''' pad 1d for a batch of input '''
         padded = [
             np.pad(x, (0, max_len - len(x)), 'constant')
             for x in _input
@@ -59,6 +61,7 @@ class VCTKDataset(Dataset):
         return padded
 
     def _pad_2d(self, _input, max_len):
+        ''' pad 2d for a batch of input '''
         padded = [
             np.pad(x, [[0, max_len - len(x)], [0, 0]], 'constant')
             for x in _input
@@ -66,6 +69,7 @@ class VCTKDataset(Dataset):
         return padded
 
     def _pad_one_hot(self, _input, max_len, one_hot_dim, pad_idx):
+        ''' pad one-hot vector for a batch of input '''
         PAD_one_hot = np.zeros([1, one_hot_dim])
         PAD_one_hot[0][pad_idx] = 1
         padded = [
@@ -184,7 +188,6 @@ class PPTS_VCTKDataset(VCTKDataset):
         self.f_ids = []
         self.phn_hats = []
         self.mags = []
-        self.labels = []
         self.original_len = {}
         for fpath, ppath in zip(self.feat_paths, self.phn_hat_paths):
             if fpath.split('/')[-1].split('_')[0] == self.spk_id:
@@ -232,6 +235,202 @@ class PPTS_VCTKDataset(VCTKDataset):
 
         return f_ids, phn_batch, mag_batch
 
-def UPPT_VCTKDataset(Dataset):
-    def __init__(self):
-        self.V = None
+class UPPT_VCTKDataset(VCTKDataset):
+    def __init__(self,
+                 feat_dir,
+                 meta_path,
+                 dict_path,
+                 phn_hat_dir,
+                 A_id,
+                 B_id,
+                 max_len,
+                 mode='train'):
+        super(UPPT_VCTKDataset, self).__init__(feat_dir, meta_path, dict_path)
+        self.A_id = A_id
+        self.B_id = B_id
+        self.max_len = max_len
+        self.mode = mode
+        self.phn_hat_paths = [
+            p.replace(feat_dir, phn_hat_dir).replace('.pkl', '_phn_hat.pkl') \
+                for p in self.feat_paths
+        ]
+        self._load_feat()
+        self.data_nums = {A_id:len(self.f_ids[A_id]), B_id: len(self.f_ids[B_id])}
+
+    def _trim_sil(self, phn_hat):
+        idx = 0
+        while 1-phn_hat[idx][1] < 1e-5:
+            idx += 1
+
+        if idx < 10:
+            idx = 0
+
+        return phn_hat[idx:]
+
+    def _load_feat(self):
+        self.f_ids = defaultdict(list)
+        self.phn_hats = defaultdict(list)
+        self.original_len = defaultdict(dict)
+
+        for fpath, ppath in zip(self.feat_paths, self.phn_hat_paths):
+            cur_id = fpath.split('/')[-1].split('_')[0]
+            if cur_id in [self.A_id, self.B_id]:
+                with open(fpath, 'rb') as f, open(ppath, 'rb') as g:
+                    phn_hat = np.array(pickle.load(g))
+
+                    if len(phn_hat) > self.max_len:
+                        continue
+                    else:
+                        phn_hat = self._trim_sil(phn_hat)
+                        phn_hat = self._pad_one_hot(
+                            np.expand_dims(phn_hat, 0),
+                            self.max_len, phn_hat.shape[-1], 0
+                        )[0]
+
+                    feat = pickle.load(f)
+                    self.f_ids[cur_id].append(feat['f_id'])
+                    self.phn_hats[cur_id].append(phn_hat)
+                    self.original_len[cur_id][feat['f_id']] = len(phn_hat)
+        print("At {} mode, {}'s data loaded".format(self.mode, self.meta_path.split('/')[-1]))
+        return
+
+    def __len__(self):
+        return self.data_nums[self.A_id] + self.data_nums[self.B_id]
+
+    def __getitem__(self, index):
+        # do not use index here for flexibility in sampling different speakers
+        A_idx = np.random.randint(0, self.data_nums[self.A_id])
+        B_idx = np.random.randint(0, self.data_nums[self.B_id])
+        return self.f_ids[self.A_id][A_idx], self.phn_hats[self.A_id][A_idx], \
+               self.f_ids[self.B_id][B_idx], self.phn_hats[self.B_id][B_idx]
+    '''
+    def _my_pad(self, batch):
+        # f_ids
+        f_ids = [[x[0] for x in batch]]
+
+        # phn_distributions
+        max_len_1 = max([len(x[1]) for x in batch])
+        one_hot_dim = batch[0][1].shape[-1]
+        phn_batch = self._pad_one_hot([x[1] for x in batch], max_len_1, one_hot_dim, 0)
+
+        return f_ids, phn_batch
+    '''
+    def _collate_fn(self, batch):
+        # batch: list of (f_id, phn_hat_batch, mag_batch) from __getitem__
+        # pre-padding
+        A_f_ids = [x[0] for x in batch]
+        A_phn_batch = torch.as_tensor([x[1] for x in batch], dtype=torch.float)
+        B_f_ids = [x[2] for x in batch]
+        B_phn_batch = torch.as_tensor([x[3] for x in batch], dtype=torch.float)
+        return A_f_ids, A_phn_batch, B_f_ids, B_phn_batch
+
+        '''
+        # Dynamic padding.
+        A_f_ids, A_phn_batch = self._my_pad(batch[0:3])
+        A_phn_batch = torch.as_tensor(A_phn_batch, dtype=torch.float)
+
+        B_f_ids, B_phn_batch, B_mag_batch = self._my_pad(batch[3:])
+        B_phn_batch = torch.as_tensor(B_phn_batch, dtype=torch.float)
+
+        return A_f_ids, A_phn_batch, B_f_ids, B_phn_batch
+        '''
+
+class STAR_VCTKDataset(VCTKDataset):
+    def __init__(self,
+                 feat_dir,
+                 meta_path,
+                 dict_path,
+                 phn_hat_dir,
+                 A_id,
+                 B_id,
+                 max_len,
+                 mode='train'):
+        super(UPPT_VCTKDataset, self).__init__(feat_dir, meta_path, dict_path)
+        self.A_id = A_id
+        self.B_id = B_id
+        self.max_len = max_len
+        self.mode = mode
+        self.phn_hat_paths = [
+            p.replace(feat_dir, phn_hat_dir).replace('.pkl', '_phn_hat.pkl') \
+                for p in self.feat_paths
+        ]
+        self._load_feat()
+        self.data_nums = {A_id:len(self.f_ids[A_id]), B_id: len(self.f_ids[B_id])}
+
+    def _trim_sil(self, phn_hat):
+        idx = 0
+        while 1-phn_hat[idx][1] < 1e-5:
+            idx += 1
+
+        if idx < 10:
+            idx = 0
+
+        return phn_hat[idx:]
+
+    def _load_feat(self):
+        self.f_ids = defaultdict(list)
+        self.phn_hats = defaultdict(list)
+        self.original_len = defaultdict(dict)
+
+        for fpath, ppath in zip(self.feat_paths, self.phn_hat_paths):
+            cur_id = fpath.split('/')[-1].split('_')[0]
+            if cur_id in [self.A_id, self.B_id]:
+                with open(fpath, 'rb') as f, open(ppath, 'rb') as g:
+                    phn_hat = np.array(pickle.load(g))
+
+                    if len(phn_hat) > self.max_len:
+                        continue
+                    else:
+                        phn_hat = self._trim_sil(phn_hat)
+                        phn_hat = self._pad_one_hot(
+                            np.expand_dims(phn_hat, 0),
+                            self.max_len, phn_hat.shape[-1], 0
+                        )[0]
+
+                    feat = pickle.load(f)
+                    self.f_ids[cur_id].append(feat['f_id'])
+                    self.phn_hats[cur_id].append(phn_hat)
+                    self.original_len[cur_id][feat['f_id']] = len(phn_hat)
+        print("At {} mode, {}'s data loaded".format(self.mode, self.meta_path.split('/')[-1]))
+        return
+
+    def __len__(self):
+        return self.data_nums[self.A_id] + self.data_nums[self.B_id]
+
+    def __getitem__(self, index):
+        # do not use index here for flexibility in sampling different speakers
+        A_idx = np.random.randint(0, self.data_nums[self.A_id])
+        B_idx = np.random.randint(0, self.data_nums[self.B_id])
+        return self.f_ids[self.A_id][A_idx], self.phn_hats[self.A_id][A_idx], \
+               self.f_ids[self.B_id][B_idx], self.phn_hats[self.B_id][B_idx]
+    '''
+    def _my_pad(self, batch):
+        # f_ids
+        f_ids = [[x[0] for x in batch]]
+
+        # phn_distributions
+        max_len_1 = max([len(x[1]) for x in batch])
+        one_hot_dim = batch[0][1].shape[-1]
+        phn_batch = self._pad_one_hot([x[1] for x in batch], max_len_1, one_hot_dim, 0)
+
+        return f_ids, phn_batch
+    '''
+    def _collate_fn(self, batch):
+        # batch: list of (f_id, phn_hat_batch, mag_batch) from __getitem__
+        # pre-padding
+        A_f_ids = [x[0] for x in batch]
+        A_phn_batch = torch.as_tensor([x[1] for x in batch], dtype=torch.float)
+        B_f_ids = [x[2] for x in batch]
+        B_phn_batch = torch.as_tensor([x[3] for x in batch], dtype=torch.float)
+        return A_f_ids, A_phn_batch, B_f_ids, B_phn_batch
+
+        '''
+        # Dynamic padding.
+        A_f_ids, A_phn_batch = self._my_pad(batch[0:3])
+        A_phn_batch = torch.as_tensor(A_phn_batch, dtype=torch.float)
+
+        B_f_ids, B_phn_batch, B_mag_batch = self._my_pad(batch[3:])
+        B_phn_batch = torch.as_tensor(B_phn_batch, dtype=torch.float)
+
+        return A_f_ids, A_phn_batch, B_f_ids, B_phn_batch
+        '''

@@ -74,12 +74,13 @@ class UPPT_Encoder(nn.Module):
 class UPPT_Decoder(nn.Module):
     def __init__(self, input_dim, enc_feat_dim=256,
                  attn_dim=128, num_layer=1, gru_dim=256,
-                 loc_aware=False, max_decode_len=500):
+                 loc_aware=False, max_decode_len=500, reduce_factor=5):
         super(UPPT_Decoder, self).__init__()
         self.input_dim = input_dim
         self.gru = nn.GRU(input_dim+enc_feat_dim, gru_dim, 1, batch_first=True)
         self.loc_aware = loc_aware
         self.max_decode_len = max_decode_len
+        self.r = reduce_factor
 
         if self.loc_aware:
             self.attention = LocAwareAttnLayer(
@@ -96,7 +97,7 @@ class UPPT_Decoder(nn.Module):
             )
 
         self.output_trans = nn.Linear(gru_dim+enc_feat_dim, input_dim)
-        self.softmax = nn.LogSoftmax(dim=-1)
+        self.softmax = nn.Softmax(dim=-1)
 
     def forward_step(self, input_x, last_hidden_state, enc_feat, last_context, last_attn_weight):
         # concat last context with input
@@ -111,8 +112,10 @@ class UPPT_Decoder(nn.Module):
         # and also for this step's output
         concat_feature = torch.cat([rnn_output.squeeze(dim=1), context], dim=-1)
         raw_pred = self.output_trans(concat_feature)
-        pred = self.softmax(raw_pred)
-
+        raw_pred_splits = torch.split(raw_pred, raw_pred.shape[-1]//self.r, -1)
+        pred_splits = [self.softmax(x) for x in raw_pred_splits]
+        pred = torch.cat(pred_splits, -1)
+        
         return pred, hidden_state, context, attn_weight
 
     def forward(self, enc_feat, ground_truth=None, teacher_force_rate=0.5):
@@ -121,6 +124,7 @@ class UPPT_Decoder(nn.Module):
             teacher_force = False
             max_step = self.max_decode_len
         else:
+            # right shift by 1 and add <GO> at first
             # sampling
             teacher_force = True if np.random.random_sample() < teacher_force_rate else False
             if teacher_force is True:
@@ -138,13 +142,19 @@ class UPPT_Decoder(nn.Module):
         for step in range(max_step):
             if step == 0:
                 if teacher_force:
+                    '''
+                    deprecated
                     input_x = ground_truth[:,0,:]
+                    '''
+                    # mimic the effect of right shift by 1
+                    input_x = enc_feat.new_zeros((batch_size, self.input_dim))
                 else:
                     # manually setting GO symbol for free run
                     input_x = enc_feat.new_zeros((batch_size, self.input_dim))
             else:
                 if teacher_force:
-                    input_x = ground_truth[:,step:step+1,:].squeeze(1)
+                    # mimic the effect of right shift by 1
+                    input_x = ground_truth[:,step-1:step,:].squeeze(1)
                 else:
                     input_x = pred
 
@@ -164,25 +174,34 @@ class UPPT_Decoder(nn.Module):
         return pred_seq, attn_record
 
 class Generator(nn.Module):
-    def __init__(self, input_dim=70, dropout_rate=0.5,
+    def __init__(self, input_dim=70, r=5, dropout_rate=0.5,
                  prenet_hidden_dims=[256,128], K=16,
-                 conv1d_bank_hidden_dim=128, conv1d_projections_hidden_dim=128, gru_dim=128):
+                 conv1d_bank_hidden_dim=128, conv1d_projections_hidden_dim=128, gru_dim=128,
+                 max_decode_len=500):
         super(Generator, self).__init__()
+        # add reduction factor
+        self.r = r
+
         self.encoder = UPPT_Encoder(
-                input_dim=input_dim, dropout_rate=0.5,
+                input_dim=input_dim*r, dropout_rate=0.5,
                 prenet_hidden_dims=[256,128], K=16,
                 conv1d_bank_hidden_dim=128, conv1d_projections_hidden_dim=128, gru_dim=128
             )
         self.decoder = UPPT_Decoder(
-                input_dim=input_dim, enc_feat_dim=2*gru_dim,
-                attn_dim=128, num_layer=1, gru_dim=256, loc_aware=False, max_decode_len=500
+                input_dim=input_dim*r, enc_feat_dim=2*gru_dim,
+                attn_dim=128, num_layer=1, gru_dim=256, loc_aware=False,
+                max_decode_len=max_decode_len//r, reduce_factor=r
             )
 
     def forward(self, input_x, teacher_force_rate=0.5):
+        # reduce
+        input_x = input_x.view(input_x.shape[0], input_x.shape[1]//self.r, input_x.shape[2]*self.r)
         enc_feat = self.encoder(input_x)
         pred_seq, attn_record = self.decoder(
-            enc_feat, ground_truth=input_x, teacher_force_rate=0.5
+            enc_feat, ground_truth=input_x, teacher_force_rate=teacher_force_rate
         )
+        # reshape back
+        pred_seq = pred_seq.view(pred_seq.shape[0], pred_seq.shape[1]*self.r, pred_seq.shape[2]//self.r)
         return pred_seq, attn_record
 
 class Discriminator(nn.Module):

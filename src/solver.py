@@ -501,6 +501,7 @@ class UPPT_Solver(Solver):
         self.optimizer_type = config['model']['uppt']['type']
         self.betas = [float(x) for x in config['model']['uppt']['betas'].split(',')]
         self.weight_decay = config['model']['uppt']['weight_decay']
+        self.max_len = config['model']['uppt']['max_len']
 
         self.A_id = args.A_id
         self.B_id = args.B_id
@@ -528,18 +529,14 @@ class UPPT_Solver(Solver):
         self.load_ckpt()
 
     def get_dataset(self, meta_path):
-        #################################
-        #################################
-        #################################
-        #################################
-        #################################
-        #################################
         dataset = UPPT_VCTKDataset(
+            feat_dir=self.feat_dir,
             meta_path=meta_path,
             dict_path=self.dict_path,
             phn_hat_dir=self.phn_hat_dir,
-            A_id = self.A_id,
-            B_id = self.B_id,
+            A_id=self.A_id,
+            B_id=self.B_id,
+            max_len=self.max_len,
             mode=self.mode
         )
         dataloader = DataLoader(
@@ -552,22 +549,24 @@ class UPPT_Solver(Solver):
 
     def build_gen(self):
         gen_A_to_B = Generator(
-            input_dim=self.phn_dim, dropout_rate=0.5,
+            input_dim=self.phn_dim, r=3, dropout_rate=0.5,
             prenet_hidden_dims=[256,128], K=16,
-            conv1d_bank_hidden_dim=128, conv1d_projections_hidden_dim=128, gru_dim=128
+            conv1d_bank_hidden_dim=128, conv1d_projections_hidden_dim=128, gru_dim=128,
+            max_decode_len=self.max_len
         ).to(self.device)
 
         gen_B_to_A = Generator(
-            input_dim=self.phn_dim, dropout_rate=0.5,
+            input_dim=self.phn_dim, r=3, dropout_rate=0.5,
             prenet_hidden_dims=[256,128], K=16,
-            conv1d_bank_hidden_dim=128, conv1d_projections_hidden_dim=128, gru_dim=128
+            conv1d_bank_hidden_dim=128, conv1d_projections_hidden_dim=128, gru_dim=128,
+            max_decode_len=self.max_len
         ).to(self.device)
 
         return gen_A_to_B, gen_B_to_A
 
     def build_dis(self):
-        dis_A = Discriminator(input_dim=self.phn_dim, input_len=self.dis_input_len).to(self.device)
-        dis_B = Discriminator(input_dim=self.phn_dim, input_len=self.dis_input_len).to(self.device)
+        dis_A = Discriminator(input_dim=self.phn_dim, input_len=self.max_len).to(self.device)
+        dis_B = Discriminator(input_dim=self.phn_dim, input_len=self.max_len).to(self.device)
 
         return dis_A, dis_B
 
@@ -591,8 +590,10 @@ class UPPT_Solver(Solver):
             self.save_dir, "model.ckpt-{}.pt".format(self.global_step)
         )
         torch.save({
-            "gen": self.gen.state_dict(),
-            "dis": self.dis.state_dict(),
+            "gen_A_to_B": self.gen_A_to_B.state_dict(),
+            "gen_B_to_A": self.gen_B_to_A.state_dict(),
+            "dis_A": self.dis_A.state_dict(),
+            "dis_B": self.dis_B.state_dict(),
             "gen_optimizer": self.gen_optimizer.state_dict(),
             "dis_optimizer": self.dis_optimizer.state_dict(),
             "global_step": self.global_step,
@@ -612,9 +613,11 @@ class UPPT_Solver(Solver):
                 checkpoint = torch.load(checkpoint_path)
             else:
                 checkpoint = torch.load(checkpoint_path, map_location=torch.device('cpu'))
-            self.gen.load_state_dict(checkpoint['gen'])
+            self.gen_A_to_B.load_state_dict(checkpoint['gen_A_to_B'])
+            self.gen_B_to_A.load_state_dict(checkpoint['gen_B_to_A'])
             if self.mode == 'train':
-                self.dis.load_state_dict(checkpoint['dis'])
+                self.dis_A.load_state_dict(checkpoint['dis_A'])
+                self.dis_B.load_state_dict(checkpoint['dis_B'])
                 self.gen_optimizer.load_state_dict(checkpoint['gen_optimizer'])
                 self.dis_optimizer.load_state_dict(checkpoint['dis_optimizer'])
             self.global_step = checkpoint['global_step']
@@ -626,35 +629,54 @@ class UPPT_Solver(Solver):
             print("Start training with new parameters.")
         return
 
-    def _xent_loss(output, target):
+    def _xent_loss(self, output, target):
         '''
         performing pure cross entropy calculation:
         xent(output, target) = -p(target) * log(q(output))
         '''
-        return (-1*target * output.log()).mean()
+        return (-1 * target * output.log()).mean()
 
-    def train_G_step(self):
+    def AE_step(self, mode):
+        tf_rate = 1. if mode == 'train' else 0.
+
+        if mode == 'train':
+            self.gen_optimizer.zero_grad()
+        self.A_to_B, self.AB_attn = self.gen_A_to_B(self.A_batch, teacher_force_rate=tf_rate)
+        self.B_to_A, self.BA_attn = self.gen_B_to_A(self.B_batch, teacher_force_rate=tf_rate)
+        self.loss_AE_A = self._xent_loss(self.A_to_B, self.A_batch)
+        self.loss_AE_B = self._xent_loss(self.B_to_A, self.B_batch)
+        self.loss_AE = self.loss_AE_A + self.loss_AE_B
+        if mode == 'train':
+            self.loss_AE.backward()
+            self.gen_optimizer.step()
+
+        return
+
+    def G_step(self, mode):
+        tf_rate = 0.
+
         ##### Generators #####
-        self.gen_optimizer.zero_grad()
+        if mode == 'train':
+            self.gen_optimizer.zero_grad()
 
         # GAN Loss
-        self.A_to_B = self.gen_A_to_B(self.A_batch)
+        self.A_to_B, self.AB_attn = self.gen_A_to_B(self.A_batch, teacher_force_rate=tf_rate)
         self.v_B_fake = self.dis_B(self.A_to_B)
         self.loss_GAN_A_to_B = -1*(self.v_B_fake).mean()
 
-        self.B_to_A = self.gen_B_to_A(self.B_batch)
+        self.B_to_A, self.BA_attn = self.gen_B_to_A(self.B_batch, teacher_force_rate=tf_rate)
         self.v_A_fake = self.dis_A(self.B_to_A)
         self.loss_GAN_B_to_A = -1*(self.v_A_fake).mean()
 
         # Cycle-consistency Loss
-        self.A_to_B_to_A = self.gen_B_to_A(self.A_to_B)
-        self.B_to_A_to_B = self.gen_A_to_B(self.B_to_A)
+        self.A_to_B_to_A, _ = self.gen_B_to_A(self.A_to_B, teacher_force_rate=tf_rate)
+        self.B_to_A_to_B, _ = self.gen_A_to_B(self.B_to_A, teacher_force_rate=tf_rate)
         self.loss_cycle_ABA = self._xent_loss(self.A_to_B_to_A, self.A_batch)
         self.loss_cycle_BAB = self._xent_loss(self.B_to_A_to_B, self.B_batch)
 
         # Identity Loss
-        self.A_to_A = self.gen_B_to_A(self.A_batch)
-        self.B_to_B = self.gen_A_to_B(self.B_batch)
+        self.A_to_A, _ = self.gen_B_to_A(self.A_batch, teacher_force_rate=tf_rate)
+        self.B_to_B, _ = self.gen_A_to_B(self.B_batch, teacher_force_rate=tf_rate)
         self.loss_identity_A = self._xent_loss(self.A_to_A, self.A_batch)
         self.loss_identity_B = self._xent_loss(self.B_to_B, self.B_batch)
 
@@ -662,14 +684,16 @@ class UPPT_Solver(Solver):
         self.loss_G = self.loss_GAN_A_to_B + self.loss_GAN_B_to_A + \
                  self.loss_cycle_ABA*10 + self.loss_cycle_BAB*10 + \
                  self.loss_identity_A*5 + self.loss_identity_B*5
-        self.loss_G.backward()
-        self.gen_optimizer.step()
+        if mode == 'train':
+            self.loss_G.backward()
+            self.gen_optimizer.step()
 
         return
 
-    def train_D_step(self):
+    def D_step(self, mode):
         ##### Discriminators #####
-        self.dis_optimizer.zero_grad()
+        if mode == 'train':
+            self.dis_optimizer.zero_grad()
 
         # GAN Loss (W distance)
         self.v_A_real = self.dis_A(self.A_batch)
@@ -700,12 +724,49 @@ class UPPT_Solver(Solver):
 
         # Total Loss
         self.loss_D = -1*(self.W_A + self.W_B) + 10*(self.GP_A + self.GP_B)
-        self.loss_D.backward()
-        grad_norm = torch.nn.utils.clip_grad_norm(
-            itertools.chain(self.dis_A.parameters(), self.dis_B.parameters()), 5.
-        )
-        self.dis_optimizer.step()
+        if mode == 'train':
+            self.loss_D.backward()
+            grad_norm = torch.nn.utils.clip_grad_norm(
+                itertools.chain(self.dis_A.parameters(), self.dis_B.parameters()), 5.
+            )
+            self.dis_optimizer.step()
 
+        return
+
+    def _add_image(self, name, data):
+        self.writer.add_image(name,
+            torch.t(data).detach().cpu().numpy(),
+            self.epoch, dataformats='HW'
+        )
+        return
+
+    def AE_logging(self, mode, batch_num):
+        if mode == 'train':
+            print('[epoch %d] training_loss: %.6f' % (self.epoch, self.epoch_loss/batch_num))
+            self.writer.add_scalar(
+                'train/AE/epoch_training_loss',
+                self.epoch_loss/batch_num,
+                self.epoch
+            )
+        else:
+            print('[epoch %d] eval_loss: %.6f' % (self.epoch, self.eval_loss/batch_num))
+            self.writer.add_scalar(
+                'eval/AE/epoch_training_loss',
+                self.eval_loss/batch_num,
+                self.epoch
+            )
+
+        self._add_image('{}/AE/A'.format(mode), self.A_batch[0])
+        self._add_image('{}/AE/B'.format(mode), self.B_batch[0])
+        self._add_image('{}/AE/A_to_B'.format(mode), self.A_to_B[0])
+        self._add_image('{}/AE/B_to_A'.format(mode), self.B_to_A[0])
+
+        self._add_image('{}/AE/AB_attn'.format(mode), self.AB_attn[0])
+        self._add_image('{}/AE/BA_attn'.format(mode), self.BA_attn[0])
+        return
+
+    def GAN_logging(self):
+        #TODO
         return
 
     def train(self):
@@ -714,91 +775,61 @@ class UPPT_Solver(Solver):
         self.dis_A.train()
         self.dis_B.train()
 
-        for idx, (_, A_batch, B_batch) in enumerate(self.train_loader):
+        self.epoch_loss = 0
+        for idx, (A_id, A_batch, B_id, B_batch) in enumerate(self.train_loader):
             self.A_batch, self.B_batch = A_batch.to(self.device), B_batch.to(self.device)
 
-            # Train Generator
-            self.train_G_step()
-            for _ in range(2):
-                # Train Discriminator
-                self.train_D_step()
-
-            '''
-            # Logging
-            if self.global_step % self.log_interval == 0:
-                print(
-                    '[GS=%3d, epoch=%d, idx=%3d] loss: %.6f' % \
-                    (self.global_step+1, self.epoch+1, idx+1, loss.item())
-                )
-            if self.global_step % self.summ_interval == 0:
-                self.writer.add_scalar('train/training_loss', loss.item(), self.global_step)
-            '''
+            if self.global_step < 20000:
+                # AE pre-train
+                self.AE_step(mode='train')
+                self.epoch_loss += self.loss_AE.item()
+                print('gs = %d, loss = %f' % (self.global_step, self.loss_AE.item()))
+            else:
+                # Train Generator
+                self.G_step(mode='train')
+                for _ in range(2):
+                    # Train Discriminator
+                    self.D_step(mode='train')
 
             # Saving or not
             self.global_step += 1
             if self.global_step % self.ckpt_interval == 0:
                 self.save_ckpt()
-        '''
-        epoch_loss /= (idx+1)
-        print('[epoch %d] training_loss: %.6f' % (self.epoch, epoch_loss))
-        self.writer.add_scalar('train/epoch_training_loss', epoch_loss, self.epoch)
-        self.writer.add_image('train/phn_hat',
-            torch.t(phn_hat_batch[0]).detach().cpu().numpy(),
-            self.epoch, dataformats='HW'
-        )
-        self.writer.add_image(
-            'train/mag_gt', torch.t(mag_batch[0]).detach().cpu().numpy()[::-1,:],
-            self.epoch, dataformats='HW'
-        )
-        self.writer.add_image(
-            'train/mag_hat', torch.t(mag_hat[0]).detach().cpu().numpy()[::-1,:],
-            self.epoch, dataformats='HW'
-        )
-        self.writer.add_audio(
-            'train/audio_gt', self.ap.inv_spectrogram(mag_batch[0].detach().cpu().numpy()),
-            self.epoch, sample_rate=self.ap.sr
-        )
-        self.writer.add_audio(
-            'train/audio_hat', self.ap.inv_spectrogram(mag_hat[0].detach().cpu().numpy()),
-            self.epoch, sample_rate=self.ap.sr
-        )
+
+        if self.global_step < 20000:
+            self.AE_logging(mode='train', batch_num=idx+1)
+        else:
+            self.GAN_logging(mode='train', batch_num=idx+1)
         self.epoch += 1
-        '''
+
         return
 
     def eval(self):
-        '''
-        eval_loss = 0.0
-        self.model.eval()
-        with torch.no_grad():
-            for idx, (_, phn_hat_batch, mag_batch) in enumerate(self.eval_loader):
-                phn_hat_batch, mag_batch = phn_hat_batch.to(self.device), mag_batch.to(self.device)
-                mag_hat = self.model(phn_hat_batch)
-                loss = self.criterion(mag_hat, mag_batch)
-                eval_loss += loss.item()
+        self.gen_A_to_B.eval()
+        self.gen_B_to_A.eval()
+        self.dis_A.eval()
+        self.dis_B.eval()
 
-                if idx % 100 == 0:
+        self.eval_loss = 0
+        with torch.no_grad():
+            for idx, (A_id, A_batch, B_id, B_batch) in enumerate(self.eval_loader):
+                self.A_batch, self.B_batch = A_batch.to(self.device), B_batch.to(self.device)
+
+                if self.global_step < 20000:
+                    self.AE_step(mode='eval')
+                    self.eval_loss += self.loss_AE.item()
+                else:
+                    #TODO
+                    self.G_step(mode='eval')
+                    self.D_step(mode='eval')
+
+                # only use 100 samples for eval
+                if idx == 100:
                     break
 
-        eval_loss /= (idx+1)
-        print('[eval %d] eval_loss: %.6f' % (self.epoch, eval_loss))
-
-        self.writer.add_scalar('eval/eval_loss', eval_loss, self.epoch)
-        self.writer.add_image(
-            'eval/mag_gt', torch.t(mag_batch[0]).detach().cpu().numpy()[::-1,:],
-            self.epoch, dataformats='HW'
-        )
-        self.writer.add_image(
-            'eval/mag_hat', torch.t(mag_hat[0]).detach().cpu().numpy()[::-1,:],
-            self.epoch, dataformats='HW'
-        )
-        self.writer.add_audio(
-            'eval/audio_gt', self.ap.inv_spectrogram(mag_batch[0].detach().cpu().numpy()),
-            self.epoch, sample_rate=self.ap.sr
-        )
-        self.writer.add_audio(
-            'eval/audio_hat', self.ap.inv_spectrogram(mag_hat[0].detach().cpu().numpy()),
-            self.epoch, sample_rate=self.ap.sr
-        )
-        '''
+            if self.global_step < 20000:
+                self.AE_logging(mode='eval', batch_num=idx+1)
+            else:
+                self.GAN_logging(mode='eval', batch_num=idx+1)
+        
         return

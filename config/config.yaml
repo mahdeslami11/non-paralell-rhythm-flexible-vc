@@ -32,11 +32,14 @@ model:
     uppt:
         lr: 0.0001
         type: "Adam"
+        betas: "0.9, 0.999"
+        weight_decay: 0.0
+        max_len: 300 # 250+50 for buffer
 
 solver:
     use_gpu: True
     num_workers: 4
-    batch_size: 25
+    batch_size: 32
     log_interval: 20
     summ_interval: 200
     ckpt_interval: 2000

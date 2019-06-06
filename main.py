@@ -4,7 +4,7 @@ import random
 import numpy as np
 import torch
 
-from src.solver import PPR_Solver, PPTS_Solver
+from src.solver import PPR_Solver, PPTS_Solver, UPPT_Solver
 
 def train(s, args, config):
     while s.epoch < 100000:
