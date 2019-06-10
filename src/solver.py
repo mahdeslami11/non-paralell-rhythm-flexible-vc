@@ -747,24 +747,21 @@ class UPPT_Solver(Solver):
     def _add_image(self, name, data):
         self.writer.add_image(name,
             torch.t(data).detach().cpu().numpy(),
-            self.epoch, dataformats='HW'
+            self.global_step, dataformats='HW'
         )
         return
 
-    def AE_logging(self, mode, batch_num):
-        # Recording avg. loss in a epoch
+    def AE_logging(self, mode):
         if mode == 'train':
-            print('[epoch %d] training_loss: %.6f' % (self.epoch, self.epoch_loss/batch_num))
             self.writer.add_scalar(
-                'train/AE/epoch_training_loss',
-                self.epoch_loss/batch_num,
+                'train/AE/training_loss',
+                self.loss_AE,
                 self.global_step
             )
         else:
-            print('[epoch %d] eval_loss: %.6f' % (self.epoch, self.eval_loss/batch_num))
             self.writer.add_scalar(
-                'eval/AE/epoch_training_loss',
-                self.eval_loss/batch_num,
+                'eval/AE/epoch_loss',
+                self.eval_loss,
                 self.global_step
             )
 
@@ -778,7 +775,6 @@ class UPPT_Solver(Solver):
         return
 
     def GAN_logging(self, mode):
-        # Recording only the last batch loss in a epoch
         self.writer.add_scalar(
             '{}/GAN/loss_G'.format(mode), self.loss_G.item(), self.global_step
         )
@@ -806,9 +802,10 @@ class UPPT_Solver(Solver):
             )
 
         self._add_image('{}/GAN/A'.format(mode), self.A_batch[0])
-        self._add_image('{}/GAN/B'.format(mode), self.B_batch[0])
         self._add_image('{}/GAN/A_to_B'.format(mode), self.A_to_B[0])
+        self._add_image('{}/GAN/B'.format(mode), self.B_batch[0])
         self._add_image('{}/GAN/B_to_A'.format(mode), self.B_to_A[0])
+
         self._add_image('{}/GAN/A_to_B_to_A'.format(mode), self.A_to_B_to_A[0])
         self._add_image('{}/GAN/B_to_A_to_B'.format(mode), self.B_to_A_to_B[0])
         self._add_image('{}/GAN/A_to_A'.format(mode), self.A_to_A[0])
@@ -825,14 +822,12 @@ class UPPT_Solver(Solver):
         self.dis_A.train()
         self.dis_B.train()
 
-        self.epoch_loss = 0
         for idx, (A_id, A_batch, B_id, B_batch) in enumerate(self.train_loader):
             self.A_batch, self.B_batch = A_batch.to(self.device), B_batch.to(self.device)
 
             if self.pre_train:
                 # AE pre-train
                 self.AE_step(mode='train')
-                self.epoch_loss += self.loss_AE.item()
                 print('gs = %d, loss = %f' % (self.global_step, self.loss_AE.item()))
             else:
                 # Train Generator
@@ -858,15 +853,17 @@ class UPPT_Solver(Solver):
                     )
                 )
 
-            # Saving or not
             self.global_step += 1
+            # Summing or not // 你是上銘哥嗎？
+            if self.global_step % self.summ_interval == 0:
+                if self.pre_train:
+                    self.AE_logging(mode='train')
+                else:
+                    self.GAN_logging(mode='train')
+            # Saving or not
             if self.global_step % self.ckpt_interval == 0:
                 self.save_ckpt()
 
-        if self.pre_train:
-            self.AE_logging(mode='train', batch_num=idx+1)
-        else:
-            self.GAN_logging(mode='train')
         self.epoch += 1
 
         return
@@ -895,7 +892,8 @@ class UPPT_Solver(Solver):
                     break
 
             if self.pre_train:
-                self.AE_logging(mode='eval', batch_num=idx+1)
+                self.eval_loss /= (idx+1)
+                self.AE_logging(mode='eval')
             else:
                 self.GAN_logging(mode='eval')
 

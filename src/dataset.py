@@ -254,8 +254,16 @@ class UPPT_VCTKDataset(VCTKDataset):
             p.replace(feat_dir, phn_hat_dir).replace('.pkl', '_phn_hat.pkl') \
                 for p in self.feat_paths
         ]
-        self._load_feat()
-        self.data_nums = {A_id:len(self.f_ids[A_id]), B_id: len(self.f_ids[B_id])}
+
+        self.use_all_spk = True if self.A_id == 'all' and self.B_id == 'all' else False
+        if self.use_all_spk:
+            self.A_group = "p340 p231 p257 p363 p250 p285 p266 p361 p360".split(' ')
+            self.B_group = "p256 p306 p301 p303 p376 p265 p268 p341 p251".split(' ')
+            self._load_all_feat()
+            self.data_nums = {'A':len(self.f_ids['A']), 'B': len(self.f_ids['B'])}
+        else:
+            self._load_feat()
+            self.data_nums = {A_id:len(self.f_ids[A_id]), B_id: len(self.f_ids[B_id])}
 
     def _trim_sil(self, phn_hat):
         idx = 0
@@ -294,15 +302,54 @@ class UPPT_VCTKDataset(VCTKDataset):
         print("At {} mode, {}'s data loaded".format(self.mode, self.meta_path.split('/')[-1]))
         return
 
+    def _load_all_feat(self):
+        self.f_ids = defaultdict(list)
+        self.phn_hats = defaultdict(list)
+        self.original_len = defaultdict(dict)
+
+        for fpath, ppath in zip(self.feat_paths, self.phn_hat_paths):
+            cur_id = fpath.split('/')[-1].split('_')[0]
+            if cur_id in self.A_group or cur_id in self.B_group:
+                with open(fpath, 'rb') as f, open(ppath, 'rb') as g:
+                    phn_hat = np.array(pickle.load(g))
+
+                    if len(phn_hat) > self.max_len:
+                        continue
+                    else:
+                        phn_hat = self._trim_sil(phn_hat)
+                        phn_hat = self._pad_one_hot(
+                            np.expand_dims(phn_hat, 0),
+                            self.max_len, phn_hat.shape[-1], 0
+                        )[0]
+
+                    feat = pickle.load(f)
+
+                    group = 'A' if cur_id in self.A_group else 'B'
+
+                    self.f_ids[group].append(feat['f_id'])
+                    self.phn_hats[group].append(phn_hat)
+                    self.original_len[group][feat['f_id']] = len(phn_hat)
+        print("At {} mode, {}'s data loaded".format(self.mode, self.meta_path.split('/')[-1]))
+        return
+
     def __len__(self):
-        return self.data_nums[self.A_id] + self.data_nums[self.B_id]
+        if self.use_all_spk:
+            return self.data_nums['A'] + self.data_nums['B']
+        else:
+            return self.data_nums[self.A_id] + self.data_nums[self.B_id]
 
     def __getitem__(self, index):
         # do not use index here for flexibility in sampling different speakers
-        A_idx = np.random.randint(0, self.data_nums[self.A_id])
-        B_idx = np.random.randint(0, self.data_nums[self.B_id])
-        return self.f_ids[self.A_id][A_idx], self.phn_hats[self.A_id][A_idx], \
-               self.f_ids[self.B_id][B_idx], self.phn_hats[self.B_id][B_idx]
+        if self.use_all_spk:
+            A_idx = np.random.randint(0, self.data_nums['A'])
+            B_idx = np.random.randint(0, self.data_nums['B'])
+            return self.f_ids['A'][A_idx], self.phn_hats['A'][A_idx], \
+                   self.f_ids['B'][B_idx], self.phn_hats['B'][B_idx]
+        else:
+            A_idx = np.random.randint(0, self.data_nums[self.A_id])
+            B_idx = np.random.randint(0, self.data_nums[self.B_id])
+            return self.f_ids[self.A_id][A_idx], self.phn_hats[self.A_id][A_idx], \
+                   self.f_ids[self.B_id][B_idx], self.phn_hats[self.B_id][B_idx]
     '''
     def _my_pad(self, batch):
         # f_ids

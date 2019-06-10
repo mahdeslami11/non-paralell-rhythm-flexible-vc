@@ -40,9 +40,9 @@ solver:
     use_gpu: True
     num_workers: 4
     batch_size: 20
-    log_interval: 20
-    summ_interval: 200
-    ckpt_interval: 2000
+    log_interval: 1
+    summ_interval: 100
+    ckpt_interval: 5000
 
 preprocess:
     leave_out_spk_id: "p258 p277 p330 p315"
