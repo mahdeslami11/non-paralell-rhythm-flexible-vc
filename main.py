@@ -55,6 +55,7 @@ if __name__ == '__main__':
     parser.add_argument('--spk_id', default=None, type=str, required=False)
     parser.add_argument('--A_id', default=None, type=str, required=False)
     parser.add_argument('--B_id', default=None, type=str, required=False)
+    parser.add_argument('--pre_train', action='store_true', default=False, dest='pre_train', required=False)
     args = parser.parse_args()
     config = yaml.load(open(args.config))
 

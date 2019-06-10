@@ -74,10 +74,12 @@ class UPPT_Encoder(nn.Module):
 class UPPT_Decoder(nn.Module):
     def __init__(self, input_dim, enc_feat_dim=256,
                  attn_dim=128, num_layer=1, gru_dim=256,
-                 loc_aware=False, max_decode_len=500, reduce_factor=5):
+                 loc_aware=False, max_decode_len=500, reduce_factor=5,
+                 dropout_rate=0.5, prenet_hidden_dims=[256,128]):
         super(UPPT_Decoder, self).__init__()
         self.input_dim = input_dim
-        self.gru = nn.GRU(input_dim+enc_feat_dim, gru_dim, 1, batch_first=True)
+        self.prenet = Prenet(input_dim, dropout_rate, prenet_hidden_dims)
+        self.gru = nn.GRU(prenet_hidden_dims[-1]+enc_feat_dim, gru_dim, 1, batch_first=True)
         self.loc_aware = loc_aware
         self.max_decode_len = max_decode_len
         self.r = reduce_factor
@@ -115,7 +117,7 @@ class UPPT_Decoder(nn.Module):
         raw_pred_splits = torch.split(raw_pred, raw_pred.shape[-1]//self.r, -1)
         pred_splits = [self.softmax(x) for x in raw_pred_splits]
         pred = torch.cat(pred_splits, -1)
-        
+
         return pred, hidden_state, context, attn_weight
 
     def forward(self, enc_feat, ground_truth=None, teacher_force_rate=0.5):
@@ -160,6 +162,7 @@ class UPPT_Decoder(nn.Module):
 
             # input_x: [batch, input_dim]
             input_x = input_x.unsqueeze(dim=1)
+            input_x = self.prenet(input_x) # add prenet here
             pred, hidden_state, context, attn_weight = \
                 self.forward_step(
                     input_x, hidden_state, enc_feat,
@@ -189,8 +192,9 @@ class Generator(nn.Module):
             )
         self.decoder = UPPT_Decoder(
                 input_dim=input_dim*r, enc_feat_dim=2*gru_dim,
-                attn_dim=128, num_layer=1, gru_dim=256, loc_aware=False,
-                max_decode_len=max_decode_len//r, reduce_factor=r
+                attn_dim=128, num_layer=1, gru_dim=256, loc_aware=True,
+                max_decode_len=max_decode_len//r, reduce_factor=r,
+                dropout_rate=0.5, prenet_hidden_dims=[256,128]
             )
 
     def forward(self, input_x, teacher_force_rate=0.5):
@@ -236,13 +240,13 @@ class Discriminator(nn.Module):
         # input_x: [batch, len, input_dim] -> [batch, input_dim, len]
         input_x_t = input_x.transpose(1, 2) if input_x.shape[-1] == self.input_dim else input_x
         h1 = self.glu(self.conv1d(input_x_t))
-        print(h1.shape)
+        #print(h1.shape)
         h2 = self.CIG_blocks[0](h1)
-        print(h2.shape)
+        #print(h2.shape)
         h3 = self.CIG_blocks[1](h2)
-        print(h3.shape)
+        #print(h3.shape)
         h4 = self.CIG_blocks[2](h3)
-        print(h4.shape)
+        #print(h4.shape)
         h4 = torch.flatten(h4, 1, -1)
         output = self.output_trans(h4)
         if not self.is_WGAN:

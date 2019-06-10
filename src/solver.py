@@ -6,6 +6,7 @@ import torch
 from tensorboardX import SummaryWriter
 from torch.nn import functional as F
 from torch.utils.data import DataLoader
+from torch.autograd import Variable
 from tensorboardX import SummaryWriter
 
 from .models import PPR, PPTS, Generator, Discriminator, OnehotEncoder
@@ -519,6 +520,7 @@ class UPPT_Solver(Solver):
             self.eval_loader = self.get_dataset(self.eval_meta_path)
             self.log_dir = os.path.join(config['path']['uppt']['log_dir'], self.save_prefix)
             self.writer = SummaryWriter(self.log_dir)
+            self.pre_train = args.pre_train
         elif mode == 'test':
             self.test_loader = self.get_dataset(self.test_meta_path)
 
@@ -637,7 +639,7 @@ class UPPT_Solver(Solver):
         return (-1 * target * output.log()).mean()
 
     def AE_step(self, mode):
-        tf_rate = 1. if mode == 'train' else 0.
+        tf_rate = max(0.5, 1-(self.epoch)*0.0005) if mode == 'train' else 0.
 
         if mode == 'train':
             self.gen_optimizer.zero_grad()
@@ -698,38 +700,47 @@ class UPPT_Solver(Solver):
         # GAN Loss (W distance)
         self.v_A_real = self.dis_A(self.A_batch)
         self.v_B_real = self.dis_B(self.B_batch)
+        self.v_A_fake = self.dis_A(self.B_to_A.detach())
+        self.v_B_fake = self.dis_B(self.A_to_B.detach())
         self.W_A = (self.v_A_real - self.v_A_fake).mean()
         self.W_B = (self.v_B_real - self.v_B_fake).mean()
 
-        # Gradient Penalty
-        alpha = torch.rand(self.batch_size, 1, 1).to(self.device)
-        self.A_inter = alpha * self.B_to_A + (1.0-alpha) * self.A_batch
-        self.v_A_inter = self.dis_A(self.A_inter)
-        gradient_A = torch.autograd.grad(
-            self.v_A_inter, self.A_inter,
-            grad_outputs=torch.ones(self.v_A_inter.size()).to(self.device),
-            create_graph=True, retain_graph=True, only_inputs=True
-        )
-        self.GP_A = ((gradient_A.norm(2) -1) ** 2).mean()
-
-        alpha = torch.rand(self.batch_size, 1, 1).to(self.device)
-        self.B_inter = alpha * self.A_to_B + (1.0-alpha) * self.B_batch
-        self.v_B_inter = self.dis_B(self.B_inter)
-        gradient_B = torch.autograd.grad(
-            self.v_B_inter, self.B_inter,
-            grad_outputs=torch.ones(self.v_B_inter.size()).to(self.device),
-            create_graph=True, retain_graph=True, only_inputs=True
-        )
-        self.GP_B = ((gradient_B.norm(2) -1) ** 2).mean()
-
-        # Total Loss
-        self.loss_D = -1*(self.W_A + self.W_B) + 10*(self.GP_A + self.GP_B)
         if mode == 'train':
+            # Gradient Penalty
+            cur_batch_size = self.A_batch.shape[0]
+            alpha = torch.rand(cur_batch_size, 1, 1).to(self.device)
+            self.A_inter = alpha * self.B_to_A.detach() + (1.0-alpha) * self.A_batch
+            self.A_inter = Variable(self.A_inter, requires_grad=True).to(self.device)
+            self.v_A_inter = self.dis_A(self.A_inter)
+            gradient_A = torch.autograd.grad(
+                self.v_A_inter, self.A_inter,
+                grad_outputs=torch.ones(self.v_A_inter.size()).to(self.device),
+                create_graph=True, retain_graph=True, only_inputs=True
+            )[0]
+            self.GP_A = ((gradient_A.norm(2) -1) ** 2).mean()
+
+            alpha = torch.rand(cur_batch_size, 1, 1).to(self.device)
+            self.B_inter = alpha * self.A_to_B.detach() + (1.0-alpha) * self.B_batch
+            self.B_inter = Variable(self.B_inter, requires_grad=True).to(self.device)
+            self.v_B_inter = self.dis_B(self.B_inter)
+            gradient_B = torch.autograd.grad(
+                self.v_B_inter, self.B_inter,
+                grad_outputs=torch.ones(self.v_B_inter.size()).to(self.device),
+                create_graph=True, retain_graph=True, only_inputs=True
+            )[0]
+            self.GP_B = ((gradient_B.norm(2) -1) ** 2).mean()
+
+            # Total Loss
+            self.loss_D = -1*(self.W_A + self.W_B) + 10*(self.GP_A + self.GP_B)
             self.loss_D.backward()
-            grad_norm = torch.nn.utils.clip_grad_norm(
+            grad_norm = torch.nn.utils.clip_grad_norm_(
                 itertools.chain(self.dis_A.parameters(), self.dis_B.parameters()), 5.
             )
             self.dis_optimizer.step()
+
+        else:
+            # for recording W distance only
+            self.loss_D = -1*(self.W_A + self.W_B)
 
         return
 
@@ -741,19 +752,20 @@ class UPPT_Solver(Solver):
         return
 
     def AE_logging(self, mode, batch_num):
+        # Recording avg. loss in a epoch
         if mode == 'train':
             print('[epoch %d] training_loss: %.6f' % (self.epoch, self.epoch_loss/batch_num))
             self.writer.add_scalar(
                 'train/AE/epoch_training_loss',
                 self.epoch_loss/batch_num,
-                self.epoch
+                self.global_step
             )
         else:
             print('[epoch %d] eval_loss: %.6f' % (self.epoch, self.eval_loss/batch_num))
             self.writer.add_scalar(
                 'eval/AE/epoch_training_loss',
                 self.eval_loss/batch_num,
-                self.epoch
+                self.global_step
             )
 
         self._add_image('{}/AE/A'.format(mode), self.A_batch[0])
@@ -765,8 +777,46 @@ class UPPT_Solver(Solver):
         self._add_image('{}/AE/BA_attn'.format(mode), self.BA_attn[0])
         return
 
-    def GAN_logging(self):
-        #TODO
+    def GAN_logging(self, mode):
+        # Recording only the last batch loss in a epoch
+        self.writer.add_scalar(
+            '{}/GAN/loss_G'.format(mode), self.loss_G.item(), self.global_step
+        )
+        self.writer.add_scalar(
+            '{}/GAN/loss_ad'.format(mode), self.loss_GAN_A_to_B.item() + self.loss_GAN_B_to_A.item(),
+            self.global_step
+        )
+        self.writer.add_scalar(
+            '{}/GAN/loss_cycle'.format(mode), self.loss_cycle_ABA.item() + self.loss_cycle_BAB.item(),
+            self.global_step
+        )
+        self.writer.add_scalar(
+            '{}/GAN/loss_id'.format(mode), self.loss_identity_A.item() + self.loss_identity_B.item(),
+            self.global_step
+        )
+        self.writer.add_scalar(
+            '{}/GAN/loss_D'.format(mode), self.loss_D.item(), self.global_step
+        )
+        self.writer.add_scalar(
+            '{}/GAN/W'.format(mode), self.W_A.item() + self.W_B.item(), self.global_step
+        )
+        if mode == 'train':
+            self.writer.add_scalar(
+                '{}/GAN/GP'.format(mode), self.GP_A.item() + self.GP_B.item(), self.global_step
+            )
+
+        self._add_image('{}/GAN/A'.format(mode), self.A_batch[0])
+        self._add_image('{}/GAN/B'.format(mode), self.B_batch[0])
+        self._add_image('{}/GAN/A_to_B'.format(mode), self.A_to_B[0])
+        self._add_image('{}/GAN/B_to_A'.format(mode), self.B_to_A[0])
+        self._add_image('{}/GAN/A_to_B_to_A'.format(mode), self.A_to_B_to_A[0])
+        self._add_image('{}/GAN/B_to_A_to_B'.format(mode), self.B_to_A_to_B[0])
+        self._add_image('{}/GAN/A_to_A'.format(mode), self.A_to_A[0])
+        self._add_image('{}/GAN/B_to_B'.format(mode), self.B_to_B[0])
+
+        self._add_image('{}/GAN/AB_attn'.format(mode), self.AB_attn[0])
+        self._add_image('{}/GAN/BA_attn'.format(mode), self.BA_attn[0])
+
         return
 
     def train(self):
@@ -779,7 +829,7 @@ class UPPT_Solver(Solver):
         for idx, (A_id, A_batch, B_id, B_batch) in enumerate(self.train_loader):
             self.A_batch, self.B_batch = A_batch.to(self.device), B_batch.to(self.device)
 
-            if self.global_step < 20000:
+            if self.pre_train:
                 # AE pre-train
                 self.AE_step(mode='train')
                 self.epoch_loss += self.loss_AE.item()
@@ -791,15 +841,32 @@ class UPPT_Solver(Solver):
                     # Train Discriminator
                     self.D_step(mode='train')
 
+                print('gs = %d, loss_G = %f, loss_ad = %f, loss_cycle = %f, loss_id = %f' %
+                    (self.global_step,
+                     self.loss_G.item(),
+                     self.loss_GAN_A_to_B.item() + self.loss_GAN_B_to_A.item(),
+                     self.loss_cycle_ABA.item() + self.loss_cycle_BAB.item(),
+                     self.loss_identity_A.item() + self.loss_identity_B.item()
+                    )
+                )
+
+                print('gs = %d, loss_D = %f, W = %f, GP = %f' %
+                    (self.global_step,
+                     self.loss_D.item(),
+                     self.W_A.item() + self.W_B.item(),
+                     self.GP_A.item() + self.GP_B.item(),
+                    )
+                )
+
             # Saving or not
             self.global_step += 1
             if self.global_step % self.ckpt_interval == 0:
                 self.save_ckpt()
 
-        if self.global_step < 20000:
+        if self.pre_train:
             self.AE_logging(mode='train', batch_num=idx+1)
         else:
-            self.GAN_logging(mode='train', batch_num=idx+1)
+            self.GAN_logging(mode='train')
         self.epoch += 1
 
         return
@@ -815,21 +882,21 @@ class UPPT_Solver(Solver):
             for idx, (A_id, A_batch, B_id, B_batch) in enumerate(self.eval_loader):
                 self.A_batch, self.B_batch = A_batch.to(self.device), B_batch.to(self.device)
 
-                if self.global_step < 20000:
+                if self.pre_train:
                     self.AE_step(mode='eval')
                     self.eval_loss += self.loss_AE.item()
+                    # only use 100 samples for eval
+                    if idx == 100:
+                        break
                 else:
-                    #TODO
                     self.G_step(mode='eval')
                     self.D_step(mode='eval')
-
-                # only use 100 samples for eval
-                if idx == 100:
+                    # only use 1 sample for eval
                     break
 
-            if self.global_step < 20000:
+            if self.pre_train:
                 self.AE_logging(mode='eval', batch_num=idx+1)
             else:
-                self.GAN_logging(mode='eval', batch_num=idx+1)
-        
+                self.GAN_logging(mode='eval')
+
         return

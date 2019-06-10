@@ -85,6 +85,6 @@ class LocAwareAttnLayer(nn.Module):
         else:
             attn_weight = self.softmax(energy)
 
-        context = torch.bmm(attn_weight.unsqueeze(dim=1), encoder_featuret).squeeze(dim=1)
+        context = torch.bmm(attn_weight.unsqueeze(dim=1), encoder_feature).squeeze(dim=1)
 
         return attn_weight, context
