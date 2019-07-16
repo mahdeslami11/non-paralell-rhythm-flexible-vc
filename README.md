@@ -2,6 +2,11 @@
 PyTorch implementation of: 
 [Rhythm-Flexible Voice Conversion without Parallel Data Using Cycle-GAN over Phoneme Posteriorgram Sequences](https://arxiv.org/abs/1808.03113)
 
+* This repo is NOT complete yet
+* This repo is NOT complete yet
+* This repo is NOT complete yet
+* Please new issues if you find something werid or not working, thanks!
+
 ## Samples
 Samples could be found [here](./samples), the corresponding experiment is specified at section 5.3 in the paper. Only conventional and proposed methods are compared here.
 
@@ -85,3 +90,4 @@ usage: main.py [-h] [--config CONFIG]
 ## TODO
 - [x] Add Logging method to solver, removing add summ redundancy in both train and eval
 - [ ] Whole conversion process pipeline, adding functions to load from specified path at inference time
+- [ ] StarGAN inference
