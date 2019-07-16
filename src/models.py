@@ -257,39 +257,31 @@ class STAR_Generator(nn.Module):
     def __init__(self, input_dim=70, r=5, dropout_rate=0.5,
                  prenet_hidden_dims=[256,128], K=16,
                  conv1d_bank_hidden_dim=128, conv1d_projections_hidden_dim=128, gru_dim=128,
-                 max_decode_len=500, class_num=40):
+                 max_decode_len=500, class_num=4):
         super(STAR_Generator, self).__init__()
         # add reduction factor
         self.r = r
 
         self.encoder = UPPT_Encoder(
-                input_dim=input_dim*r+class_num, dropout_rate=0.5,
+                input_dim=input_dim*r, dropout_rate=0.5,
                 prenet_hidden_dims=[256,128], K=16,
                 conv1d_bank_hidden_dim=128, conv1d_projections_hidden_dim=128, gru_dim=128
             )
         self.decoder = UPPT_Decoder(
-                input_dim=input_dim*r+class_num, enc_feat_dim=2*gru_dim,
+                input_dim=input_dim*r, enc_feat_dim=2*gru_dim,
                 attn_dim=128, num_layer=1, gru_dim=256, loc_aware=True,
                 max_decode_len=max_decode_len//r, reduce_factor=r,
                 dropout_rate=0.5, prenet_hidden_dims=[256,128]
             )
+        self.fusing = nn.Linear(class_num, gru_dim*2)
 
     def forward(self, input_x, c, teacher_force_rate=0.5):
         # reduce
         input_x = input_x.view(input_x.shape[0], input_x.shape[1]//self.r, input_x.shape[2]*self.r)
-        ##
-        ##
-        ##
-        ##
-        ##
-        c = c.repeat(1, 1, x.size(2), x.size(3))
-        # concat c and x
-        ##
-        ##
-        ##
-        ##
-        ##
         enc_feat = self.encoder(input_x)
+        spk_emb = self.fusing(c)
+        spk_emb = torch.unsqueeze(spk_emb, dim=1).repeat(1, enc_feat.shape[1], 1)
+        enc_feat = enc_feat + spk_emb
         pred_seq, attn_record = self.decoder(
             enc_feat, ground_truth=input_x, teacher_force_rate=teacher_force_rate
         )

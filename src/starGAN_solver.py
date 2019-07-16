@@ -9,7 +9,7 @@ from torch.utils.data import DataLoader
 from torch.autograd import Variable
 from tensorboardX import SummaryWriter
 
-from .models import Generator, STAR_Discriminator, OnehotEncoder
+from .models import STAR_Generator, STAR_Discriminator, OnehotEncoder
 from .dataset import STAR_VCTKDataset
 from .utils import AudioProcessor
 
@@ -74,9 +74,9 @@ class STAR_Solver(Solver):
         self.save_prefix = "starGAN_log"
 
         self.mode = mode
-        self.gen = self.build_gen()
         if mode == 'train':
             self.train_loader, self.class_num = self.get_dataset(self.train_meta_path)
+            self.gen = self.build_gen()
             self.dis = self.build_dis()
             self.gen_optimizer, self.dis_optimizer = self.build_optimizer()
             self.eval_loader = self.get_dataset(self.eval_meta_path)
@@ -85,6 +85,7 @@ class STAR_Solver(Solver):
             self.pre_train = args.pre_train
         elif mode == 'test':
             self.test_loader, self.class_num = self.get_dataset(self.test_meta_path)
+            self.gen = self.build_gen()
         self.one_hot_encoder = self.build_one_hot()
 
         self.save_dir = os.path.join(config['path']['uppt']['save_dir'], self.save_prefix)
@@ -111,19 +112,21 @@ class STAR_Solver(Solver):
         return dataloader, dataset.class_num
 
     def build_gen(self):
-        gen = Generator(
-            input_dim=self.phn_dim, r=3, dropout_rate=0.5,
-            prenet_hidden_dims=[256,128], K=16,
-            conv1d_bank_hidden_dim=128, conv1d_projections_hidden_dim=128, gru_dim=128,
-            max_decode_len=self.max_len
-        ).to(self.device)
+        gen = STAR_Generator(
+                input_dim=self.phn_dim, r=3, dropout_rate=0.5,
+                prenet_hidden_dims=[256,128], K=16,
+                conv1d_bank_hidden_dim=128, conv1d_projections_hidden_dim=128, gru_dim=128,
+                max_decode_len=self.max_len,
+                class_num=self.class_num
+            ).to(self.device)
         return gen
 
     def build_dis(self):
         dis = STAR_Discriminator(
                 input_dim=self.phn_dim,
                 input_len=self.max_len,
-                class_num=self.class_num).to(self.device)
+                class_num=self.class_num
+              ).to(self.device)
         return dis
 
     def build_one_hot(self):
@@ -196,8 +199,10 @@ class STAR_Solver(Solver):
 
         if mode == 'train':
             self.gen_optimizer.zero_grad()
-        self.A_to_B, self.AB_attn = self.gen(self.A_batch, self.B_emb, teacher_force_rate=tf_rate)
-        self.B_to_A, self.BA_attn = self.gen(self.B_batch, self.A_emb,teacher_force_rate=tf_rate)
+        self.A_to_B, self.AB_attn = self.gen(
+            self.A_batch, self.tgt_group_one_hot, teacher_force_rate=tf_rate)
+        self.B_to_A, self.BA_attn = self.gen(
+            self.B_batch, self.src_group_one_hot, teacher_force_rate=tf_rate)
         self.loss_AE_A = self._xent_loss(self.A_to_B, self.A_batch)
         self.loss_AE_B = self._xent_loss(self.B_to_A, self.B_batch)
         self.loss_AE = self.loss_AE_A + self.loss_AE_B
@@ -215,26 +220,32 @@ class STAR_Solver(Solver):
             self.gen_optimizer.zero_grad()
 
         # GAN Loss
-        self.A_to_B, self.AB_attn = self.gen(self.A_batch, self.B_id, teacher_force_rate=tf_rate)
+        self.A_to_B, self.AB_attn = self.gen(
+            self.A_batch, self.tgt_group_one_hot, teacher_force_rate=tf_rate)
         self.v_B_fake, self.clf_B_fake = self.dis(self.A_to_B)
         self.loss_GAN_A_to_B = -1*(self.v_B_fake).mean()
 
-        self.B_to_A, self.BA_attn = self.gen(self.B_batch, self.A_emb, teacher_force_rate=tf_rate)
+        self.B_to_A, self.BA_attn = self.gen(
+            self.B_batch, self.src_group_one_hot, teacher_force_rate=tf_rate)
         self.v_A_fake, self.clf_A_fake = self.dis(self.B_to_A)
         self.loss_GAN_B_to_A = -1*(self.v_A_fake).mean()
 
-        self.loss_clf_A_forG = self._xent_loss(self.clf_A_fake, self.A_id)
-        self.loss_clf_B_forG = self._xent_loss(self.clf_B_fake, self.B_id)
+        self.loss_clf_A_forG = self._xent_loss(self.clf_A_fake, self.src_group_one_hot)
+        self.loss_clf_B_forG = self._xent_loss(self.clf_B_fake, self.tgt_group_one_hot)
 
         # Cycle-consistency Loss
-        self.A_to_B_to_A, _ = self.gen(self.A_to_B, self.A_emb, teacher_force_rate=tf_rate)
-        self.B_to_A_to_B, _ = self.gen(self.B_to_A, self.B_emb, teacher_force_rate=tf_rate)
+        self.A_to_B_to_A, _ = self.gen(
+            self.A_to_B, self.src_group_one_hot, teacher_force_rate=tf_rate)
+        self.B_to_A_to_B, _ = self.gen(
+            self.B_to_A, self.tgt_group_one_hot, teacher_force_rate=tf_rate)
         self.loss_cycle_ABA = self._xent_loss(self.A_to_B_to_A, self.A_batch)
         self.loss_cycle_BAB = self._xent_loss(self.B_to_A_to_B, self.B_batch)
 
         # Identity Loss
-        self.A_to_A, _ = self.gen(self.A_batch, self.A_emb, teacher_force_rate=tf_rate)
-        self.B_to_B, _ = self.gen(self.B_batch, self.B_emb, teacher_force_rate=tf_rate)
+        self.A_to_A, _ = self.gen(
+            self.A_batch, self.src_group_one_hot, teacher_force_rate=tf_rate)
+        self.B_to_B, _ = self.gen(
+            self.B_batch, self.tgt_group_one_hot, teacher_force_rate=tf_rate)
         self.loss_identity_A = self._xent_loss(self.A_to_A, self.A_batch)
         self.loss_identity_B = self._xent_loss(self.B_to_B, self.B_batch)
 
@@ -262,8 +273,8 @@ class STAR_Solver(Solver):
         self.W_A = (self.v_A_real - self.v_A_fake).mean()
         self.W_B = (self.v_B_real - self.v_B_fake).mean()
 
-        self.loss_clf_A_forD = self._xent_loss(self.clf_A_real, self.A_id)
-        self.loss_clf_B_forD = self._xent_loss(self.clf_B_real, self.B_id)
+        self.loss_clf_A_forD = self._xent_loss(self.clf_A_real, self.src_group_one_hot)
+        self.loss_clf_B_forD = self._xent_loss(self.clf_B_real, self.tgt_group_one_hot)
 
         if mode == 'train':
             # Gradient Penalty
@@ -294,9 +305,7 @@ class STAR_Solver(Solver):
             self.loss_D = -1*(self.W_A + self.W_B) + \
                 10*(self.GP_A + self.GP_B) + 10*(self.loss_clf_A_forD + self.loss_clf_B_forD)
             self.loss_D.backward()
-            grad_norm = torch.nn.utils.clip_grad_norm_(
-                itertools.chain(self.dis_A.parameters(), self.dis_B.parameters()), 5.
-            )
+            grad_norm = torch.nn.utils.clip_grad_norm_(self.dis.parameters(), 5.)
             self.dis_optimizer.step()
 
         else:
@@ -387,9 +396,6 @@ class STAR_Solver(Solver):
                 self.one_hot_encoder(src_group).to(self.device), \
                 self.one_hot_encoder(tgt_group).to(self.device)
 
-            print(self.A_batch, A_id, self.src_group_one_hot)
-            exit()
-
             if self.pre_train:
                 # AE pre-train
                 self.AE_step(mode='train')
@@ -433,10 +439,8 @@ class STAR_Solver(Solver):
         return
 
     def eval(self):
-        self.gen_A_to_B.eval()
-        self.gen_B_to_A.eval()
-        self.dis_A.eval()
-        self.dis_B.eval()
+        self.gen.eval()
+        self.dis.eval()
 
         self.eval_loss = 0
         with torch.no_grad():
