@@ -23,10 +23,10 @@ Samples could be found [here](./samples), the corresponding experiment is specif
 2. All modules training could be done by calling the `main.py` by adding different arguments. 
 <pre><code>
 usage: main.py [-h] [--config CONFIG] 
-[--seed SEED] [--train | --test]
-[--ppr | --ppts | --uppt] 
-[--spk_id SPK_ID] [--A_id A_ID] [--B_id B_ID] 
-[--pre_train]
+               [--seed SEED] [--train | --test]
+               [--ppr | --ppts | --uppt] 
+               [--spk_id SPK_ID] [--A_id A_ID] [--B_id B_ID] 
+               [--pre_train]
 </code></pre>
 3. The detailed usages of each module are listed below.
 4. The path of logging and model saving should be specified in config file first.
@@ -40,26 +40,26 @@ usage: main.py [-h] [--config CONFIG]
 ## PPTS
 ### Training
 <pre><code>python3 main.py --config [path-to-config] --train --ppts \\
---spk_id [which-speaker-to-train]</code></pre>
+                --spk_id [which-speaker-to-train]</code></pre>
 
 ### Evaluation
 <pre><code>python3 main.py --config [path-to-config] --test --ppts \\
---spk_id [which-speaker-to-train]</code></pre>
+                --spk_id [which-speaker-to-train]</code></pre>
 
 ## UPPT(CycleGAN ver.)
 ### AE Pre-Training
 <pre><code>python3 main.py --config [path-to-config] --train --uppt \\
---pre_train --A_id [src-speaker] --B_id [tgt-speaker]</code></pre>
+    --pre_train --A_id [src-speaker] --B_id [tgt-speaker]</code></pre>
 * If A_id and B_id are both set to "all", then data of two groups of fast and slow speakers instead of two single speaker will be used instead for pre-training.
 * Ex. <pre><code> ... --A_id all --B_id all</code></pre>
 
 ### Training
 <pre><code>python3 main.py --config [path-to-config] --train --uppt \\
---A_id [src-speaker] --B_id [tgt-speaker]</code></pre>
+    --A_id [src-speaker] --B_id [tgt-speaker]</code></pre>
 
 ### Evaluation
 <pre><code>python3 main.py --config [path-to-config] --test --uppt \\
---A_id [src-speaker] --B_id [tgt-speaker]</code></pre>
+    --A_id [src-speaker] --B_id [tgt-speaker]</code></pre>
 
 ## UPPT(StarGAN ver.)
 ### AE Pre-Training
@@ -71,7 +71,7 @@ usage: main.py [-h] [--config CONFIG]
 
 ### Evaluation
 <pre><code>python3 main.py --config [path-to-config] --test --uppt \\
---tgt_id [tgt-speaker]</code></pre>
+    --tgt_id [tgt-speaker]</code></pre>
 
 
 ## Notes
