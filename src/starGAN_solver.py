@@ -444,8 +444,11 @@ class STAR_Solver(Solver):
 
         self.eval_loss = 0
         with torch.no_grad():
-            for idx, (A_id, A_batch, B_id, B_batch) in enumerate(self.eval_loader):
+            for idx, (src_group, A_id, A_batch, tgt_group, B_id, B_batch) in enumerate(self.eval_loader):
                 self.A_batch, self.B_batch = A_batch.to(self.device), B_batch.to(self.device)
+                self.src_group_one_hot, self.tgt_group_one_hot = \
+                    self.one_hot_encoder(src_group).to(self.device), \
+                    self.one_hot_encoder(tgt_group).to(self.device)
 
                 if self.pre_train:
                     self.AE_step(mode='eval')

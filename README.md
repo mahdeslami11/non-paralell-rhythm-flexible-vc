@@ -2,19 +2,82 @@
 PyTorch implementation of: 
 [Rhythm-Flexible Voice Conversion without Parallel Data Using Cycle-GAN over Phoneme Posteriorgram Sequences](https://arxiv.org/abs/1808.03113)
 
-# Data Preprocess
+## Samples
+Samples could be found [here](./samples), the corresponding experiment is specified at section 5.3 in the paper. Only conventional and proposed methods are compared here.
+
+## Python and Toolkit Version
+    Python:   '3.5.2'
+    Numpy:    '1.16.2'
+    PyTorch:  '0.4.1'
+    Montreal-force-aligner: '1.1.0'
+
+## Data Preprocess (Frame-level phoneme boundary segmentation included)
 1. Download and decompress VCTK corpus
 2. Put text file and audio file under same dir, run `rename.sh`
 3. Run align_VCTK.sh to get aligned result
 4. Set path info in config/config.yaml
 5. Run `preprocess.py` to generate acoustic features with corresponding phone label
 
-# Network
+## Configuration and Usage
+1. All hyperparameters are listed in [this .yaml file](./config/config.yaml)
+2. All modules training could be done by calling the `main.py` by adding different arguments. 
+<pre><code>
+usage: main.py [-h] [--config CONFIG] 
+[--seed SEED] [--train | --test]
+[--ppr | --ppts | --uppt] 
+[--spk_id SPK_ID] [--A_id A_ID] [--B_id B_ID] 
+[--pre_train]
+</code></pre>
+3. The detailed usages of each module are listed below.
+4. The path of logging and model saving should be specified in config file first.
 
-# Notes
+### PPR
+### Training
+<pre><code>python3 main.py --config [path-to-config] --train --ppr</code></pre>
+### Evaluation
+<pre><code>python3 main.py --config [path-to-config] --test --ppr</code></pre>
+
+## PPTS
+### Training
+<pre><code>python3 main.py --config [path-to-config] --train --ppts \\
+--spk_id [which-speaker-to-train]</code></pre>
+
+### Evaluation
+<pre><code>python3 main.py --config [path-to-config] --test --ppts \\
+--spk_id [which-speaker-to-train]</code></pre>
+
+## UPPT(CycleGAN ver.)
+### AE Pre-Training
+<pre><code>python3 main.py --config [path-to-config] --train --uppt \\
+--pre_train --A_id [src-speaker] --B_id [tgt-speaker]</code></pre>
+* If A_id and B_id are both set to "all", then data of two groups of fast and slow speakers instead of two single speaker will be used instead for pre-training.
+* Ex. <pre><code> ... --A_id all --B_id all</code></pre>
+
+### Training
+<pre><code>python3 main.py --config [path-to-config] --train --uppt \\
+--A_id [src-speaker] --B_id [tgt-speaker]</code></pre>
+
+### Evaluation
+<pre><code>python3 main.py --config [path-to-config] --test --uppt \\
+--A_id [src-speaker] --B_id [tgt-speaker]</code></pre>
+
+## UPPT(StarGAN ver.)
+### AE Pre-Training
+<pre><code>python3 star_main.py 
+--config [path-to-config] --train --uppt --pre_train</code></pre>
+
+### Training
+<pre><code>python3 star_main.py --config [path-to-config] --train --uppt</code></pre>
+
+### Evaluation
+<pre><code>python3 main.py --config [path-to-config] --test --uppt \\
+--tgt_id [tgt-speaker]</code></pre>
+
+
+## Notes
 1. Phoneme 'spn' means Unknown in MFA, so currently map it with 'sp' to id 0 as well.
 2. Is padding 'sp' a good choice? Or maybe 'sil'?
 
-# TODO
-- [ ] Add a function to load from specified path at Inference time
-- [ ] Add Logging method to solver, removing add summ redundancy in both train and eval
+## TODO
+- [x] Add Logging method to solver, removing add summ redundancy in both train and eval
+- [ ] Whole conversion process pipeline, adding functions to load from specified path at inference time
