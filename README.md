@@ -32,12 +32,14 @@ usage: main.py [-h] [--config CONFIG]
 4. The path of logging and model saving should be specified in config file first.
 
 ### PPR
+[Example script](./ppr.sh)
 ### Training
 <pre><code>python3 main.py --config [path-to-config] --train --ppr</code></pre>
 ### Evaluation
 <pre><code>python3 main.py --config [path-to-config] --test --ppr</code></pre>
 
 ## PPTS
+[Example script](./ppts.sh)
 ### Training
 <pre><code>python3 main.py --config [path-to-config] --train --ppts \\
                 --spk_id [which-speaker-to-train]</code></pre>
@@ -47,6 +49,7 @@ usage: main.py [-h] [--config CONFIG]
                 --spk_id [which-speaker-to-train]</code></pre>
 
 ## UPPT(CycleGAN ver.)
+[Example script](./uppt.sh)
 ### AE Pre-Training
 <pre><code>python3 main.py --config [path-to-config] --train --uppt \\
     --pre_train --A_id [src-speaker] --B_id [tgt-speaker]</code></pre>
@@ -62,6 +65,7 @@ usage: main.py [-h] [--config CONFIG]
     --A_id [src-speaker] --B_id [tgt-speaker]</code></pre>
 
 ## UPPT(StarGAN ver.)
+[Example script](./star.sh)
 ### AE Pre-Training
 <pre><code>python3 star_main.py 
 --config [path-to-config] --train --uppt --pre_train</code></pre>
