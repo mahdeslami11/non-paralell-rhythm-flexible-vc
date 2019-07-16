@@ -86,6 +86,7 @@ class STAR_Solver(Solver):
         elif mode == 'test':
             self.test_loader, self.class_num = self.get_dataset(self.test_meta_path)
             self.gen = self.build_gen()
+
         self.one_hot_encoder = self.build_one_hot()
 
         self.save_dir = os.path.join(config['path']['uppt']['save_dir'], self.save_prefix)
@@ -439,6 +440,7 @@ class STAR_Solver(Solver):
         return
 
     def eval(self):
+        ### TBD ###
         self.gen.eval()
         self.dis.eval()
 

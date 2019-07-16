@@ -2,9 +2,9 @@
 PyTorch implementation of: 
 [Rhythm-Flexible Voice Conversion without Parallel Data Using Cycle-GAN over Phoneme Posteriorgram Sequences](https://arxiv.org/abs/1808.03113)
 
-* This repo is NOT complete yet
-* This repo is NOT complete yet
-* This repo is NOT complete yet
+* This repo is NOT completed yet
+* This repo is NOT completed yet
+* This repo is NOT completed yet
 * Please new issues if you find something werid or not working, thanks!
 
 ## Samples
