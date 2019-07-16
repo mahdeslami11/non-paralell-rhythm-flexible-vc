@@ -252,3 +252,90 @@ class Discriminator(nn.Module):
         if not self.is_WGAN:
             output = self.activation(output)
         return output
+
+class STAR_Generator(nn.Module):
+    def __init__(self, input_dim=70, r=5, dropout_rate=0.5,
+                 prenet_hidden_dims=[256,128], K=16,
+                 conv1d_bank_hidden_dim=128, conv1d_projections_hidden_dim=128, gru_dim=128,
+                 max_decode_len=500, class_num=40):
+        super(STAR_Generator, self).__init__()
+        # add reduction factor
+        self.r = r
+
+        self.encoder = UPPT_Encoder(
+                input_dim=input_dim*r+class_num, dropout_rate=0.5,
+                prenet_hidden_dims=[256,128], K=16,
+                conv1d_bank_hidden_dim=128, conv1d_projections_hidden_dim=128, gru_dim=128
+            )
+        self.decoder = UPPT_Decoder(
+                input_dim=input_dim*r+class_num, enc_feat_dim=2*gru_dim,
+                attn_dim=128, num_layer=1, gru_dim=256, loc_aware=True,
+                max_decode_len=max_decode_len//r, reduce_factor=r,
+                dropout_rate=0.5, prenet_hidden_dims=[256,128]
+            )
+
+    def forward(self, input_x, c, teacher_force_rate=0.5):
+        # reduce
+        input_x = input_x.view(input_x.shape[0], input_x.shape[1]//self.r, input_x.shape[2]*self.r)
+        ##
+        ##
+        ##
+        ##
+        ##
+        c = c.repeat(1, 1, x.size(2), x.size(3))
+        # concat c and x
+        ##
+        ##
+        ##
+        ##
+        ##
+        enc_feat = self.encoder(input_x)
+        pred_seq, attn_record = self.decoder(
+            enc_feat, ground_truth=input_x, teacher_force_rate=teacher_force_rate
+        )
+        # reshape back
+        pred_seq = pred_seq.view(pred_seq.shape[0], pred_seq.shape[1]*self.r, pred_seq.shape[2]//self.r)
+        return pred_seq, attn_record
+
+class STAR_Discriminator(nn.Module):
+    def __init__(self, input_dim, input_len, class_num):
+        super(STAR_Discriminator, self).__init__()
+        self.input_dim = input_dim
+        self.input_len = input_len
+        self.conv1d = nn.Conv1d(
+            input_dim, 128,
+            kernel_size=3, stride=2, padding=3//2
+        )
+        self.glu = GLU(128)
+        self.CIG_blocks_dims = [(128,256),(256,512),(512,1024)]
+        self.CIG_kernels = [3, 3, 6]
+        self.CIG_strides = [2, 2, 2]
+        self.CIG_blocks = nn.ModuleList(
+            [CIG_block(in_dim, out_dim, kernel_size=k, stride=s)
+                for (in_dim, out_dim), k, s in \
+                    zip(self.CIG_blocks_dims, self.CIG_kernels, self.CIG_strides)]
+        )
+
+        self.reduce_len = int(((input_len-3)/2)+1) # first conv1d
+        for k, s in zip(self.CIG_kernels, self.CIG_strides):
+            self.reduce_len = int(((self.reduce_len-k)/s)+1) # 3*CIG_block
+
+        self.output_trans_1 = nn.Linear(self.CIG_blocks_dims[-1][1]*self.reduce_len, 1)
+        self.output_trans_2 = nn.Linear(self.CIG_blocks_dims[-1][1]*self.reduce_len, class_num)
+        self.activation = nn.Sigmoid()
+
+    def forward(self, input_x):
+        # input_x: [batch, len, input_dim] -> [batch, input_dim, len]
+        input_x_t = input_x.transpose(1, 2) if input_x.shape[-1] == self.input_dim else input_x
+        h1 = self.glu(self.conv1d(input_x_t))
+        #print(h1.shape)
+        h2 = self.CIG_blocks[0](h1)
+        #print(h2.shape)
+        h3 = self.CIG_blocks[1](h2)
+        #print(h3.shape)
+        h4 = self.CIG_blocks[2](h3)
+        #print(h4.shape)
+        h4 = torch.flatten(h4, 1, -1)
+        output_wgan = self.output_trans_1(h4)
+        output_clf = self.activation(self.output_trans_2(h4))
+        return output_wgan, output_clf

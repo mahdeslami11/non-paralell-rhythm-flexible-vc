@@ -816,6 +816,13 @@ class UPPT_Solver(Solver):
 
         return
 
+    def _decrease_lr(self):
+        for param_group in self.gen_optimizer.param_groups:
+            param_group['lr'] = param_group['lr'] * 0.1
+        for param_group in self.dis_optimizer.param_groups:
+            param_group['lr'] = param_group['lr'] * 0.1
+        return
+
     def train(self):
         self.gen_A_to_B.train()
         self.gen_B_to_A.train()
@@ -825,6 +832,10 @@ class UPPT_Solver(Solver):
         for idx, (A_id, A_batch, B_id, B_batch) in enumerate(self.train_loader):
             self.A_batch, self.B_batch = A_batch.to(self.device), B_batch.to(self.device)
 
+            if self.global_step > 50000 and self.pre_train:
+                self.pre_train = False
+                self._decrease_lr()
+
             if self.pre_train:
                 # AE pre-train
                 self.AE_step(mode='train')
@@ -832,7 +843,7 @@ class UPPT_Solver(Solver):
             else:
                 # Train Generator
                 self.G_step(mode='train')
-                for _ in range(2):
+                for _ in range(1):
                     # Train Discriminator
                     self.D_step(mode='train')
 
@@ -863,9 +874,8 @@ class UPPT_Solver(Solver):
             # Saving or not
             if self.global_step % self.ckpt_interval == 0:
                 self.save_ckpt()
-
+        
         self.epoch += 1
-
         return
 
     def eval(self):
