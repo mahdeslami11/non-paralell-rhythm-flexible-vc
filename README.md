@@ -79,7 +79,7 @@ usage: main.py [-h] [--config CONFIG]
 <pre><code>python3 star_main.py --config [path-to-config] --train --uppt</code></pre>
 
 ### Evaluation
-<pre><code>python3 main.py --config [path-to-config] --test --uppt \\
+<pre><code>python3 star_main.py --config [path-to-config] --test --uppt \\
     --tgt_id [tgt-speaker]</code></pre>
 
 
