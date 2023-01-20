@@ -91,3 +91,54 @@ usage: main.py [-h] [--config CONFIG]
 - [x] Add Logging method to solver, removing add summ redundancy in both train and eval
 - [ ] Whole conversion process pipeline, adding functions to load from specified path at inference time
 - [ ] StarGAN inference
+‏var SpeechRecognition = SpeechRecognition || webkitSpeechRecognition
+‏var recognition = new SpeechRecognition();
+recognition.continuous = false;
+recognition.lang = 'en-US';
+recognition.interimResults = false;
+recognition.maxAlternatives = 1;
+recognition.start();
+recognition.stop();
+recognition.onresult = function(event) {
+  var result = event.results[0][0].transcript;
+}
+recognition.onnomatch = function(event) {}
+recognition.onerror= function(event) {}
+
+<!DOCTYPE html>
+<html lang="fa">
+<head>
+    <meta charset="UTF-8">
+    <title>Rapidcode.iR - سورس کد</title>
+    <link rel="stylesheet" href="static/css/main.css">
+    <link rel="stylesheet" href="static/css/lib/normalize.css">
+    <link rel="stylesheet" href="static/css/lib/skeleton.css">
+    <link rel="stylesheet" href="static/css/lib/persian-datepicker.min.css">
+</head>
+<body>
+ <script src="static/js/lib/jquery-3.2.1.min.js"></script>
+    <script src="static/js/lib/persian-date.min.js"></script>
+    <script src="static/js/lib/persian-datepicker.min.js"></script>
+    <script src="static/js/app.js"></script>
+    <script>
+        const datepickerDOM = $("#leavingDate");
+        window.dateObject = datepickerDOM.persianDatepicker(
+        {
+            "inline": false,
+            "format": "LLLL",
+            "viewMode": "day",
+            "initialValue": true,
+            "onSelect" : function(){ 
+                const currentDateState = date.dateObject.State.gregorian;
+             
+                window.selectedDate = ${currentDateState.year}-${(currentDateState.month + 1).toString().padStart(2, "0")}-${currentDateState.day.toString().padStart(2, "0")};
+                 
+                dateObject.hide();
+                getTheVoiceResult(selectedDate);
+            }
+        });
+         
+        const date = dateObject.getState().view;
+    </script>
+</body>
+</html>   
